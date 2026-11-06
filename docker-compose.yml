@@ -11,8 +11,8 @@ services:
       DB_HOST: postgres
       DB_PORT: 5432
       DB_USER: ${DB_USER:-emailservice}
-      DB_PASS: ${DB_PASS:-email@service}
-      DB_NAME: ${DB_NAME:-email_service_db}
+      DB_PASS: ${DB_PASS:-emailservice}
+      DB_NAME: ${DB_NAME:-emailservice}
       REDIS_HOST: redis
       REDIS_PORT: 6379
       SMTP_HOST: ${SMTP_HOST:-}
@@ -33,6 +33,8 @@ services:
       SITE_VOLTIC_APIKEY: ${SITE_VOLTIC_APIKEY:-}
       SITE_VOLTIC_RECIPIENT: ${SITE_VOLTIC_RECIPIENT:-}
       SITE_VOLTIC_NAME: ${SITE_VOLTIC_NAME:-Voltic Africa Limited}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
+      JWT_EXPIRES_IN_SECONDS: ${JWT_EXPIRES_IN_SECONDS:-3600}
     depends_on:
       postgres:
         condition: service_healthy

@@ -25,3 +25,7 @@ export function getSiteConfig(siteId: string): SiteConfig | undefined {
     recipient,
   };
 }
+
+export function isKnownSite(siteId: string): boolean {
+  return Object.hasOwn(siteDefinitions, siteId);
+}

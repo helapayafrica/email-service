@@ -7,6 +7,7 @@ import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { MailModule } from './mail/mail.module.js';
 import { ContactModule } from './contact/contact.module.js';
 import { dataSourceOptions } from './database/data-source.js';
+import { AuthModule } from './auth/auth.module.js';
 
 @Module({
   imports: [
@@ -29,6 +30,7 @@ import { dataSourceOptions } from './database/data-source.js';
     }),
     ContactModule,
     MailModule,
+    AuthModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
 })
