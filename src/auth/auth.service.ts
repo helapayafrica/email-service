@@ -1,12 +1,12 @@
+import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
+import { JwtService } from '@nestjs/jwt';
 import { UserService } from '../users/user.service.js';
 import { hashPassword, verifyPassword } from '../users/password.js';
-import { getSiteConfig } from '../config/sites.config.js';
+import { getSiteName } from '../config/sites.config.js';
 import type { LoginDto } from './dto/login.dto.js';
-import { JwtService } from '@nestjs/jwt';
-import { Injectable, Logger } from '@nestjs/common';
-import { UnauthorizedException } from '@nestjs/common';
-import { JwTPayload } from './jwt-payload.js';
-
+import type { JwtPayload } from './jwt-payload.js';
+import type { AuthUser } from './auth-user.js';
+import { accessibleSiteIds } from './site-access.js';
 
 @Injectable()
 export class AuthService {
@@ -19,41 +19,51 @@ export class AuthService {
 
   constructor(
     private readonly users: UserService,
-  private readonly jwt: JwtService,
-) {}
+    private readonly jwt: JwtService,
+  ) {}
 
-async login(dto: LoginDto) {
-  const user = await this.users.findByEmailWithPassword(dto.email);
-  const passwordValid = await verifyPassword(
-    user?.passwordHash ?? (await this.dummyHash),
-    dto.password,
-  );
+  async login(dto: LoginDto) {
+    const user = await this.users.findByEmailWithPassword(dto.email);
+    const passwordValid = await verifyPassword(
+      user?.passwordHash ?? (await this.dummyHash),
+      dto.password,
+    );
 
-  // Same message for every failure so it doesn't revealwhich part was wrong.
-  if (!user || !user.isActive || !passwordValid) {
-    this.logger.warn('Login failed');
-    throw new UnauthorizedException('Invalid email orpassword');
+    // Same message for every failure so it doesn't reveal which part was wrong.
+    if (!user || !user.isActive || !passwordValid) {
+      this.logger.warn('Login failed');
+      throw new UnauthorizedException('Invalid email or password');
+    }
+
+    const payload: JwtPayload = { sub: user.id, email: user.email };
+    const accessToken = await this.jwt.signAsync(payload);
+    this.logger.log(`Login succeeded userId=${user.id} role=${user.role}`);
+
+    return {
+      accessToken,
+      tokenType: 'Bearer' as const,
+      expiresIn: Number(process.env.JWT_EXPIRES_IN_SECONDS ?? 3600),
+      user: this.profile({
+        id: user.id,
+        email: user.email,
+        fullName: user.fullName,
+        role: user.role,
+        siteIds: user.siteIds,
+      }),
+    };
   }
 
-  const payload: JwTPayload = {
-    sub: user.id,
-    siteId: user.siteId,
-    email: user.email,
-  };
-  const accessToken = await this.jwt.signAsync(payload);
-  this.logger.log(`Login succeeded userId=${user.id}siteId=${user.siteId}`);
-
-  return {
-    accessToken,
-    tokenType: 'Bearer' as const,
-    expiresIn: Number(process.env.JWT_EXPIRES_IN_SECONDS ?? 3600),
-    user: {
+  // What the dashboard gets: who you are, plus the companies you can switch between.
+  profile(user: AuthUser) {
+    return {
       id: user.id,
       email: user.email,
       fullName: user.fullName,
-      siteId: user.siteId,
-      siteName: getSiteConfig(user.siteId)?.name ?? user.siteId,
-    },
-  };
-}
+      role: user.role,
+      sites: accessibleSiteIds(user).map((id) => ({
+        id,
+        name: getSiteName(id),
+      })),
+    };
+  }
 }

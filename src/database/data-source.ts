@@ -1,7 +1,7 @@
 import 'dotenv/config';
 import { DataSource, type DataSourceOptions } from 'typeorm';
 import { ContactRequest } from '../contact/entities/contact-request.entity.js';
-import  {User} from '../users/entities/user.entity.js';
+import { User } from '../users/entities/user.entity.js';
 
 export const dataSourceOptions: DataSourceOptions = {
   type: 'postgres',

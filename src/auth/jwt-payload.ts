@@ -1,5 +1,4 @@
-export interface  JwTPayload {
-  sub: string;
-  siteId: string;
+export interface JwtPayload {
+  sub: string; // user id
   email: string;
 }

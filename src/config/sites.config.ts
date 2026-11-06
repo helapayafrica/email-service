@@ -29,3 +29,13 @@ export function getSiteConfig(siteId: string): SiteConfig | undefined {
 export function isKnownSite(siteId: string): boolean {
   return Object.hasOwn(siteDefinitions, siteId);
 }
+
+export function listSiteIds(): string[] {
+  return Object.keys(siteDefinitions);
+}
+
+export function getSiteName(siteId: string): string {
+  if (!isKnownSite(siteId)) return siteId;
+  const definition = siteDefinitions[siteId];
+  return process.env[`${definition.prefix}_NAME`] ?? definition.defaultName;
+}

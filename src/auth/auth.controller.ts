@@ -1,6 +1,15 @@
-import { Body, Controller, HttpCode, HttpStatus, Post } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Post,
+  UseGuards,
+} from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import {
+  ApiBearerAuth,
   ApiOkResponse,
   ApiOperation,
   ApiTags,
@@ -9,13 +18,16 @@ import {
 } from '@nestjs/swagger';
 import { AuthService } from './auth.service.js';
 import { LoginDto } from './dto/login.dto.js';
+import { CurrentUser } from './current-user.decorator.js';
+import * as authUser from './auth-user.js';
+import { JwtAuthGuard } from './jwt-auth.guard.js';
 
 @ApiTags('Auth')
 @Controller('auth')
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
-  // Much stricter than the global limit: 5 attempts perminute per IP.
+  // Much stricter than the global limit: 5 attempts per minute per IP.
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @Post('login')
   @HttpCode(HttpStatus.OK)
@@ -30,8 +42,8 @@ export class AuthController {
           id: '6f1c...',
           email: 'jane@deliva.com',
           fullName: 'Jane Doe',
-          siteId: 'deliva',
-          siteName: 'Deliva Fasta',
+          role: 'company_user',
+          sites: [{ id: 'deliva', name: 'Deliva Fasta' }],
         },
       },
     },
@@ -40,5 +52,16 @@ export class AuthController {
   @ApiTooManyRequestsResponse({ description: 'Too many login attempts' })
   login(@Body() dto: LoginDto) {
     return this.authService.login(dto);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Get('me')
+  @ApiBearerAuth('bearer')
+  @ApiOperation({ summary: 'Get the logged-in user' })
+  @ApiUnauthorizedResponse({
+    description: 'Missing, invalid, or expired token',
+  })
+  me(@CurrentUser() user: authUser.AuthUser) {
+    return this.authService.profile(user);
   }
 }

@@ -4,6 +4,7 @@ import { JwtModule } from '@nestjs/jwt';
 import { UserModule } from '../users/user.module.js';
 import { AuthController } from './auth.controller.js';
 import { AuthService } from './auth.service.js';
+import { JwtAuthGuard } from './jwt-auth.guard.js';
 
 @Module({
   imports: [
@@ -13,7 +14,7 @@ import { AuthService } from './auth.service.js';
       useFactory: (config: ConfigService) => {
         const secret = config.getOrThrow<string>('JWT_SECRET');
         if (secret.length < 32) {
-          throw new Error('JWT_SECRET must be at least 32characters');
+          throw new Error('JWT_SECRET must be at least 32 characters');
         }
         return {
           secret,
@@ -25,8 +26,9 @@ import { AuthService } from './auth.service.js';
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService],
-  // Exported so the guard in step 4 can verify tokens.
-  exports: [JwtModule],
+  providers: [AuthService, JwtAuthGuard],
+  // Modules whose controllers use JwtAuthGuard import AuthModule; the guard
+  // is instantiated there and needs JwtService and UserService.
+  exports: [JwtModule, UserModule, JwtAuthGuard],
 })
 export class AuthModule {}

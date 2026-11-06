@@ -51,3 +51,7 @@ Key points that span multiple files:
 - `typescript/no-floating-promises` is an error in oxlint — intentionally detached promises must be prefixed with `void`.
 - Unit tests construct services directly with hand-rolled mocks (`vi.fn()`, globals enabled) rather than via Nest's testing module.
 - Mailpit exists only in `docker-compose.dev.yml`; production uses `docker-compose.prod.yml` with `.env.production` (`npm run prod:up`). Deployment details: `docs/VPS_DEPLOYMENT.md`, `docs/VPS_IP_DEPLOYMENT.md`.
+
+## In-progress work
+
+Dashboard login (users, JWT auth, multi-company access, super-admin) is being built on `feature/dashboard-auth`. Plan, decisions, and what is done/pending: `docs/DASHBOARD_AUTH_PLAN.md`. Keep that file updated as steps finish.

@@ -1,21 +1,29 @@
 import { parseArgs } from 'node:util';
 import { createInterface } from 'node:readline/promises';
 import dataSource from '../database/data-source.js';
-import { User } from '../users/entities/user.entity.js';
+import {
+  User,
+  USER_ROLES,
+  type UserRole,
+} from '../users/entities/user.entity.js';
 import { UserService } from '../users/user.service.js';
+
+const usage = `Usage:
+  npm run user:create -- --email <email> --name "<full name>" --site <siteId> [--site <siteId> ...]
+  npm run user:create -- --email <email> --name "<full name>" --role super_admin`;
 
 const { values } = parseArgs({
   options: {
     email: { type: 'string' },
     name: { type: 'string' },
-    site: { type: 'string' },
+    site: { type: 'string', multiple: true },
+    role: { type: 'string', default: 'company_user' },
   },
 });
 
-if (!values.email || !values.name || !values.site) {
-  console.error(
-    'Usage: npm run user:create -- --email <email> --name "<full name>" --site <siteId>',
-  );
+const role = values.role as UserRole;
+if (!values.email || !values.name || !USER_ROLES.includes(role)) {
+  console.error(usage);
   process.exit(1);
 }
 
@@ -30,12 +38,13 @@ try {
   const user = await users.create({
     email: values.email,
     fullName: values.name,
-    siteId: values.site,
     password,
+    role,
+    siteIds: values.site ?? [],
   });
-  console.log(
-    `Created user ${user.email} (${user.id}) for site ${user.siteId}`,
-  );
+  const scope =
+    user.role === 'super_admin' ? 'all sites' : user.siteIds.join(', ');
+  console.log(`Created ${user.role} ${user.email} (${user.id}) for ${scope}`);
 } catch (error) {
   console.error(error instanceof Error ? error.message : error);
   process.exitCode = 1;

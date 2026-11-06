@@ -1,7 +1,11 @@
-import { BadRequestException, ConflictException, Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { QueryFailedError, Repository } from 'typeorm';
-import { User } from './entities/user.entity.js';
+import { User, USER_ROLES, type UserRole } from './entities/user.entity.js';
 import { isEmail } from 'class-validator';
 import { hashPassword } from './password.js';
 import { isKnownSite } from '../config/sites.config.js';
@@ -11,8 +15,9 @@ export const MIN_PASSWORD_LENGTH = 12;
 export interface CreateUserInput {
   email: string;
   fullName: string;
-  siteId: string;
   password: string;
+  role: UserRole;
+  siteIds: string[];
 }
 
 export function normalizeEmail(email: string): string {
@@ -29,6 +34,7 @@ export class UserService {
     return this.repo.findOne({ where: { id } });
   }
 
+  // The only query that loads passwordHash; used by login.
   findByEmailWithPassword(email: string): Promise<User | null> {
     return this.repo.findOne({
       where: { email: normalizeEmail(email) },
@@ -36,8 +42,10 @@ export class UserService {
         id: true,
         email: true,
         passwordHash: true,
-        siteId: true,
         fullName: true,
+        role: true,
+        siteIds: true,
+        isActive: true,
       },
     });
   }
@@ -45,17 +53,25 @@ export class UserService {
   async create(input: CreateUserInput): Promise<User> {
     const email = normalizeEmail(input.email);
     const fullName = input.fullName.trim();
+    const siteIds = [...new Set(input.siteIds)]; // drop duplicates
 
     if (!isEmail(email)) {
       throw new BadRequestException('Invalid email address');
     }
-
     if (!fullName) {
       throw new BadRequestException('Full name is required');
     }
-
-    if (!isKnownSite(input.siteId)) {
-      throw new BadRequestException(`Unknown site "${input.siteId}"`);
+    if (!USER_ROLES.includes(input.role)) {
+      throw new BadRequestException(
+        `Role must be one of: ${USER_ROLES.join(', ')}`,
+      );
+    }
+    if (input.role === 'company_user' && siteIds.length === 0) {
+      throw new BadRequestException('A company user needs at least one site');
+    }
+    const unknown = siteIds.filter((siteId) => !isKnownSite(siteId));
+    if (unknown.length > 0) {
+      throw new BadRequestException(`Unknown site(s): ${unknown.join(', ')}`);
     }
     if (input.password.length < MIN_PASSWORD_LENGTH) {
       throw new BadRequestException(
@@ -68,7 +84,9 @@ export class UserService {
         this.repo.create({
           email,
           fullName,
-          siteId: input.siteId,
+          role: input.role,
+          // Super-admins see everything, so their list stays empty.
+          siteIds: input.role === 'super_admin' ? [] : siteIds,
           passwordHash: await hashPassword(input.password),
         }),
       );
@@ -80,7 +98,9 @@ export class UserService {
         error instanceof QueryFailedError &&
         (error.driverError as { code?: string }).code === '23505'
       ) {
-        throw new ConflictException(`A user with email${email} already exists`);
+        throw new ConflictException(
+          `A user with email ${email} already exists`,
+        );
       }
       throw error;
     }

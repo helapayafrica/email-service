@@ -1,7 +1,6 @@
 import type { MigrationInterface, QueryRunner } from 'typeorm';
 import { Table, TableIndex } from 'typeorm';
 
-
 export class CreateUsers1794000000000 implements MigrationInterface {
   async up(queryRunner: QueryRunner): Promise<void> {
     await queryRunner.createTable(
@@ -25,7 +24,6 @@ export class CreateUsers1794000000000 implements MigrationInterface {
         ],
       }),
     );
-
 
     await queryRunner.createIndex(
       'users',
