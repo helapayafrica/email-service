@@ -8,7 +8,7 @@ const siteDefinitions: Record<string, { prefix: string; defaultName: string }> =
   {
     deliva: { prefix: 'SITE_DELIVA', defaultName: 'Deliva Fasta' },
     alumni: { prefix: 'SITE_ALUMNI', defaultName: 'Rongai Old Boys Alumni' },
-    voltic: { prefix: 'SITE_VOLTIC', defaultName: 'Voltic Africa Limited '}
+    voltic: { prefix: 'SITE_VOLTIC', defaultName: 'Voltic Africa Limited' },
   };
 
 export function getSiteConfig(siteId: string): SiteConfig | undefined {

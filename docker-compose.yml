@@ -27,9 +27,12 @@ services:
       SITE_DELIVA_APIKEY: ${SITE_DELIVA_APIKEY:-}
       SITE_DELIVA_RECIPIENT: ${SITE_DELIVA_RECIPIENT:-}
       SITE_DELIVA_NAME: ${SITE_DELIVA_NAME:-Deliva Fasta}
+      SITE_ALUMNI_APIKEY: ${SITE_ALUMNI_APIKEY:-}
+      SITE_ALUMNI_RECIPIENT: ${SITE_ALUMNI_RECIPIENT:-}
+      SITE_ALUMNI_NAME: ${SITE_ALUMNI_NAME:-Rongai Old Boys Alumni}
       SITE_VOLTIC_APIKEY: ${SITE_VOLTIC_APIKEY:-}
       SITE_VOLTIC_RECIPIENT: ${SITE_VOLTIC_RECIPIENT:-}
-      SITE_VOLTIC_NAME: ${SITE_ALUMNI_NAME:-Voltic Africa Limited}
+      SITE_VOLTIC_NAME: ${SITE_VOLTIC_NAME:-Voltic Africa Limited}
     depends_on:
       postgres:
         condition: service_healthy
