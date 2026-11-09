@@ -63,6 +63,24 @@ branch is not pushed yet.
   - Statuses now live in `CONTACT_REQUEST_STATUSES` / `ContactRequestStatus` in the entity.
   - Migration `1794200000000-ContactRequestsSiteIndex`: `("siteId", "createdAt")` ascending, not DESC as first planned. `@Index` can't express DESC, so a DESC index would make `migration:generate` try to change it, and Postgres scans the btree backwards for `ORDER BY ... DESC` anyway. The index is declared on the entity too.
   - Verified against a local stack: company-user vs super-admin scoping, filters, paging, 400/401/404 cases, CORS preflight, OpenAPI.
+- [ ] **Step 5b: sites (companies) in the database, managed by super-admins.** Replaces `src/config/sites.config.ts` and the `SITE_*` env vars. Started 2026-11-09.
+  - Decisions:
+    - Site `id` stays a slug (`deliva`) and is the primary key, so `contact_requests.siteId` and `users.siteIds` keep working unchanged.
+    - API key: SHA-256 **hash** for checking `x-api-key` (lookup by hash, no decryption) **plus** an AES-256-GCM **encrypted copy** so a super-admin can reveal it for the frontend. Generated server-side (`sk_` + 32 random bytes); rotating replaces both.
+    - Each company has its own SMTP (host, port, secure, user, password, From). The password is encrypted (it must be usable to send, so it can't be hashed). If a site has no SMTP host, fall back to the global `SMTP_*` (keeps Mailpit working in dev).
+    - One new env var `SITE_SECRETS_KEY` (32 bytes, base64; `openssl rand -base64 32`) encrypts all site secrets. Losing it makes stored secrets unreadable; back it up with `JWT_SECRET`.
+    - SMTP credentials never go into the Bull job (Redis); `MailProcessor` loads the site by `siteId` when sending.
+    - Sites are deactivated (`isActive = false`), not deleted, so `users.siteIds` and old requests never point at a missing site.
+    - Admin responses never include the SMTP password or the API key hash; the key is returned only on create, rotate and an explicit reveal.
+  - Parts:
+    - [x] A. `src/sites/site-secrets.ts` (`generateApiKey`, `hashApiKey`, `SecretBox` encrypt/decrypt) and `SITE_SECRETS_KEY` in `.env*` and `docker-compose.yml`.
+    - [x] B. `Site` entity (`src/sites/entities/site.entity.ts`) + migration `1794300000000-CreateSites`. `id` is a slug enforced by `CHK_sites_id_slug` (2–50 chars, `a-z0-9-`); `apiKeyHash` is unique; `apiKeyHash`, `apiKeyEncrypted` and `smtpPassEncrypted` are `select: false`. Registered in `data-source.ts`.
+    - [x] C. `SitesService` (`findById`, `findActiveByApiKey`, `list`, `create`) + `SitesModule` (provides `SecretBox` from `SITE_SECRETS_KEY`; the app refuses to start without it), registered in `AppModule`. CLI `npm run site:import-env` / `site:import-env:prod` (`src/cli/import-sites-from-env.ts`) copies sites from `SITE_*` env vars with their current API keys; skips sites already in the table or missing env vars, never overwrites. `create` uses `insert`, not `save`, because `save` with a hand-picked primary key would overwrite an existing site.
+      - Also fixed: `ContactRequest.fullName` now declares `length: 150` to match the database. Before, `migration:generate` would have dropped and re-added the column, losing every name. `migration:generate --check` now reports no changes.
+    - [ ] D. Switch consumers to `SitesService`: `ApiKeyGuard`, `ContactService`, `MailProcessor` / `MailService` (per-site transport), `AuthService`, `RequestsService`, `site-access.ts`, `UserService`.
+    - [ ] E. `SuperAdminGuard` and `/admin/sites`: list, get, create, update, deactivate, `POST :id/rotate-key`, `GET :id/api-key`.
+    - [ ] F. Remove `sites.config.ts` and the `SITE_*` vars (after import has run in production); update `CLAUDE.md`.
+    - [ ] G. Tests: secrets round-trip and tamper detection, guard by hash, per-site vs fallback SMTP, admin guard.
 - [ ] **Step 6: configuration and docs.**
   - Production `.env.production`: generate a fresh `JWT_SECRET` with `openssl rand -base64 48`.
   - Add the dashboard's origin to `CORS_ORIGINS`.

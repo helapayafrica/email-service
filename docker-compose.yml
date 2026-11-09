@@ -35,6 +35,7 @@ services:
       SITE_VOLTIC_NAME: ${SITE_VOLTIC_NAME:-Voltic Africa Limited}
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
       JWT_EXPIRES_IN_SECONDS: ${JWT_EXPIRES_IN_SECONDS:-3600}
+      SITE_SECRETS_KEY: ${SITE_SECRETS_KEY:?SITE_SECRETS_KEY must be set}
     depends_on:
       postgres:
         condition: service_healthy

@@ -26,7 +26,7 @@ export class ContactRequest {
   @Column()
   siteId: string;
 
-  @Column()
+  @Column({ length: 150 })
   fullName: string;
 
   @Column({ length: 254 })

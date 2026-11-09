@@ -31,6 +31,8 @@
     "migration:show": "npm run build && typeorm migration:show -d dist/database/data-source.js",
     "user:create": "npm run build && node dist/cli/create-user.js",
     "user:create:prod": "node dist/cli/create-user.js",
+    "site:import-env": "npm run build && node dist/cli/import-sites-from-env.js",
+    "site:import-env:prod": "node dist/cli/import-sites-from-env.js",
     "lint": "oxlint --type-aware src/ test/",
     "test": "vitest run",
     "test:watch": "vitest",

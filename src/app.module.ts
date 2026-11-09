@@ -8,6 +8,7 @@ import { MailModule } from './mail/mail.module.js';
 import { ContactModule } from './contact/contact.module.js';
 import { dataSourceOptions } from './database/data-source.js';
 import { AuthModule } from './auth/auth.module.js';
+import { SitesModule } from './sites/sites.module.js';
 import { RequestsModule } from './requests/requests.module.js';
 
 @Module({
@@ -33,6 +34,7 @@ import { RequestsModule } from './requests/requests.module.js';
     MailModule,
     AuthModule,
     RequestsModule,
+    SitesModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
 })
