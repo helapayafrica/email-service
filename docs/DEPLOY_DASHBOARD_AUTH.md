@@ -283,7 +283,6 @@ dcp up -d --build
 |---|---|
 | Every website gets `401 Invalid API key or site` | The site isn't in the `sites` table or is inactive. Re-run step 5 and check its output, then check the `select ... from sites` query. |
 | One site gets `401` | That site's `_APIKEY` in `.env.production` differs from the key on its website. The import stored the env value. Fix the env value, delete the row (`delete from sites where id='<id>'`) and re-run step 5. |
-| `400 Unknown or unconfigured site` | The site exists but is inactive (`isActive = f`). |
 | Request saved but status `failed`; logs show `Site <id> does not exist or is inactive` | The site was deactivated or removed after the form was submitted. Reactivate it. Failed jobs aren't retried automatically after all 5 attempts. |
 | Logs show SMTP `EAUTH` or connection errors for one site | That site's own SMTP settings are wrong. Sites without their own SMTP use the global `SMTP_*` settings. |
 | App restarts with `SITE_SECRETS_KEY must be set` or `must be 32 bytes` | The variable is missing or truncated in `.env.production`. |

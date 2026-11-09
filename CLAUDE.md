@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-NVO Email Service: a NestJS 12 backend that receives contact-form submissions from several company websites (`POST /contact`), stores them in PostgreSQL, queues delivery via Bull/Redis, and sends HTML + plain-text email over SMTP. Node 24+, ESM (`"type": "module"`).
+NVO Email Service: a NestJS 12 backend that receives contact-form submissions from several company websites (`POST /contact`), stores them in PostgreSQL, queues delivery via Bull/Redis, and sends HTML + plain-text email over SMTP. A JWT-authenticated dashboard API lets company users read their companies' requests (`/requests`) and super-admins manage companies (`/admin/sites`). Node 24+, ESM (`"type": "module"`).
 
 ## Commands
 
@@ -25,7 +25,12 @@ npm run test:e2e         # *.e2e-spec.ts — boots the real AppModule, so needs 
 npm run migration:show | migration:run | migration:revert
 npm run migration:generate -- src/database/migrations/AddField
 npm run migration:create -- src/database/migrations/AddField
+
+npm run user:create -- --email a@b.com --name "A" --role super_admin   # or --site <id> (repeatable); prompts for the password
+docker compose -f docker-compose.yml -f docker-compose.dev.yml exec app npm run user:create:prod -- ...   # same, inside the local stack
 ```
+
+`.env` needs `JWT_SECRET` (≥ 32 chars) and `SITE_SECRETS_KEY` (32 bytes, base64); the app and Compose refuse to start without them. A fresh database has no sites: create a super-admin, log in, `POST /admin/sites` (walkthrough in `README.md`).
 
 Before merging/deploying the project docs ask for: `npm run build && npm run lint && npm test`.
 
@@ -33,7 +38,9 @@ Local URLs: API `http://localhost:3000`, Scalar API docs `/docs`, Mailpit inbox 
 
 ## Architecture
 
-Request flow: `ContactController` → `ApiKeyGuard` → `ContactService` → Postgres row (`contact_requests`, status `queued`) → Bull job `send-contact-email` on queue `mail` → `MailProcessor` renders template → `MailService` (nodemailer) → status updated to `sent`/`failed`.
+Request flow: `ContactController` → `ApiKeyGuard` → `ContactService` → Postgres row (`contact_requests`, status `queued`) → Bull job `send-contact-email` on queue `mail` → `MailProcessor` renders template and loads the site's mail settings → `MailService` (nodemailer) → status updated to `sent`/`failed`.
+
+Dashboard flow: `POST /auth/login` (argon2id, 5/min throttle) returns a JWT with only `{ sub, email }`. `JwtAuthGuard` reloads the user from the database on every request (so `isActive`, `role` and `siteIds` changes apply immediately) and sets `request.user` (`AuthUser`, read with `@CurrentUser()`). `SuperAdminGuard` goes after it on `/admin/*`. Tenant scoping always goes through `SitesService.accessibleSiteIds(user)`: super-admins get every site (including inactive), company users get `users.siteIds`; a client-supplied `siteId` may only narrow that list, and anything outside it is a `404`, never `403`.
 
 Key points that span multiple files:
 

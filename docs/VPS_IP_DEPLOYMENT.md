@@ -135,13 +135,12 @@ CORS_ORIGINS=https://www.company-one.example,https://company-one.example
 THROTTLE_TTL_MS=60000
 THROTTLE_LIMIT=30
 
-SITE_DELIVA_NAME=Deliva Fasta
-SITE_DELIVA_APIKEY=REPLACE_WITH_A_RANDOM_SITE_KEY
-SITE_DELIVA_RECIPIENT=contact@company-one.example
+# Signs dashboard login tokens: openssl rand -base64 48
+JWT_SECRET=REPLACE_WITH_OUTPUT_OF_openssl_rand_base64_48
+JWT_EXPIRES_IN_SECONDS=3600
 
-SITE_ALUMNI_NAME=Rongai Old Boys Alumni
-SITE_ALUMNI_APIKEY=REPLACE_WITH_ANOTHER_RANDOM_SITE_KEY
-SITE_ALUMNI_RECIPIENT=contact@company-two.example
+# Encrypts site API keys and SMTP passwords in the database: openssl rand -base64 32
+SITE_SECRETS_KEY=REPLACE_WITH_OUTPUT_OF_openssl_rand_base64_32
 ```
 
 The Compose network supplies `DB_HOST=postgres`, `DB_PORT=5432`,
@@ -150,6 +149,15 @@ Do not replace those internal service names with the public VPS IP.
 
 Never commit `.env.production`. Use real random values and keep a protected copy
 in a password or secret manager.
+
+Generate `JWT_SECRET` and `SITE_SECRETS_KEY` on the server with the commands in
+their comments, and store both in your password manager. **Without
+`SITE_SECRETS_KEY`, a database backup can't recover the sites' API keys and
+SMTP passwords.** Compose refuses to start if either is missing.
+
+Companies (sites) are not configured here. They are created in the database by
+a super-admin after the stack is running (see "Create the first super-admin and
+your sites" below).
 
 ## 5. Validate and start the production stack
 
@@ -186,6 +194,45 @@ Test it from the VPS:
 
 ```bash
 curl --fail http://127.0.0.1:3000/
+```
+
+### Create the first super-admin and your sites
+
+There is no public sign-up. Create the first account inside the app container.
+The command prompts for a password (at least 12 characters). The password is
+visible while you type it, so clear the screen afterwards.
+
+```bash
+sudo docker compose --env-file .env.production -f docker-compose.yml -f docker-compose.prod.yml exec app npm run user:create:prod -- --email you@yourcompany.com --name "Your Name" --role super_admin
+clear
+```
+
+Log in and create a site for each company website. The `id` is permanent and
+is what the website sends as `siteId`. Install `jq` first (`sudo apt install -y jq`).
+
+```bash
+read -rsp 'Password: ' PW; echo
+TOKEN=$(curl -s -X POST http://127.0.0.1:3000/auth/login \
+  -H 'Content-Type: application/json' \
+  -d "{\"email\":\"you@yourcompany.com\",\"password\":\"$PW\"}" | jq -r .accessToken)
+unset PW
+
+curl -s -X POST http://127.0.0.1:3000/admin/sites \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"id":"deliva","name":"Deliva Fasta","recipient":"contact@company-one.example"}' | jq
+```
+
+The response includes `apiKey`. Configure that website to send it as
+`x-api-key`. You can reveal it again later with
+`GET /admin/sites/<id>/api-key`. To send a company's email through its own mail
+server, add `smtpHost`, `smtpPort`, `smtpUser`, `smtpPass`, and `smtpFrom`. See
+[PROJECT.md](PROJECT.md#managing-sites). These steps can also be done in the
+browser at `/docs`.
+
+Create logins for company staff, one per person, limited to their companies:
+
+```bash
+sudo docker compose --env-file .env.production -f docker-compose.yml -f docker-compose.prod.yml exec app npm run user:create:prod -- --email jane@company-one.example --name "Jane" --site deliva
 ```
 
 ## 6. Configure Nginx for the IP address
@@ -382,7 +429,7 @@ Submit a production contact test:
 curl --fail-with-body --request POST \
   'https://203.0.113.10/contact' \
   --header 'Content-Type: application/json' \
-  --header 'x-api-key: REPLACE_WITH_THE_SITE_KEY' \
+  --header 'x-api-key: REPLACE_WITH_THE_SITE_APIKEY_FROM_ADMIN_SITES' \
   --header "idempotency-key: $(uuidgen)" \
   --data-raw '{
     "siteId": "deliva",
@@ -406,6 +453,11 @@ sudo docker compose --env-file .env.production \
 
 Back up PostgreSQL first, then deploy reviewed changes:
 
+Upgrading a server that still configures sites with `SITE_<ID>_*` variables
+(before the dashboard release) needs extra one-time steps: new secrets and a
+site import. Follow [DEPLOY_DASHBOARD_AUTH.md](DEPLOY_DASHBOARD_AUTH.md) for
+that upgrade instead of the commands below.
+
 ```bash
 cd /opt/nvo-email-service
 git pull --ff-only
@@ -425,12 +477,14 @@ The application startup applies pending migrations automatically.
 - [ ] PostgreSQL and Redis are not published to the host.
 - [ ] `.env.production` is protected with mode `600`.
 - [ ] `APP_URL` uses the public IP and correct scheme.
-- [ ] `CORS_ORIGINS` lists the calling company websites, not arbitrary origins.
+- [ ] `CORS_ORIGINS` lists the calling company websites (and the dashboard, once deployed), not arbitrary origins.
 - [ ] Mailpit is absent and real SMTP is configured.
 - [ ] The IP certificate is trusted and its short-lived renewal is monitored.
 - [ ] Nginx proxies to `127.0.0.1:3000`.
 - [ ] Database backups are automated and copied off the VPS.
 - [ ] A real contact request returns `202` and delivers successfully.
+- [ ] `JWT_SECRET` and `SITE_SECRETS_KEY` are stored in a password manager, separately from the database backups.
+- [ ] Only the people who run the service are super-admins; company staff have company-user accounts.
 
 ## Official references
 

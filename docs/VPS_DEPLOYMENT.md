@@ -112,14 +112,25 @@ CORS_ORIGINS=https://www.company-one.example,https://company-one.example
 THROTTLE_TTL_MS=60000
 THROTTLE_LIMIT=30
 
-SITE_DELIVA_APIKEY=REPLACE_WITH_A_RANDOM_SITE_KEY
-SITE_DELIVA_RECIPIENT=contact@company-one.example
-SITE_ALUMNI_APIKEY=REPLACE_WITH_ANOTHER_RANDOM_SITE_KEY
-SITE_ALUMNI_RECIPIENT=contact@company-two.example
+# Signs dashboard login tokens: openssl rand -base64 48
+JWT_SECRET=REPLACE_WITH_OUTPUT_OF_openssl_rand_base64_48
+JWT_EXPIRES_IN_SECONDS=3600
+
+# Encrypts site API keys and SMTP passwords in the database: openssl rand -base64 32
+SITE_SECRETS_KEY=REPLACE_WITH_OUTPUT_OF_openssl_rand_base64_32
 ```
 
 Use a password manager or secret manager to generate and retain strong values.
 Never use Mailpit values or commit `.env.production`.
+
+Generate `JWT_SECRET` and `SITE_SECRETS_KEY` on the server with the commands in
+their comments, and store both in your password manager. **Without
+`SITE_SECRETS_KEY`, a database backup can't recover the sites' API keys and
+SMTP passwords.** Compose refuses to start if either is missing.
+
+Companies (sites) are not configured here. They are created in the database by
+a super-admin after the stack is running (see "Create the first super-admin and
+your sites" below).
 
 SMTP settings depend on the provider. Port `587` commonly uses STARTTLS with
 `SMTP_SECURE=false`; implicit TLS commonly uses port `465` with
@@ -154,6 +165,45 @@ Verify locally on the VPS:
 
 ```bash
 curl --fail http://127.0.0.1:3000/
+```
+
+### Create the first super-admin and your sites
+
+There is no public sign-up. Create the first account inside the app container.
+The command prompts for a password (at least 12 characters). The password is
+visible while you type it, so clear the screen afterwards.
+
+```bash
+sudo docker compose --env-file .env.production -f docker-compose.yml -f docker-compose.prod.yml exec app npm run user:create:prod -- --email you@yourcompany.com --name "Your Name" --role super_admin
+clear
+```
+
+Log in and create a site for each company website. The `id` is permanent and
+is what the website sends as `siteId`. Install `jq` first (`sudo apt install -y jq`).
+
+```bash
+read -rsp 'Password: ' PW; echo
+TOKEN=$(curl -s -X POST http://127.0.0.1:3000/auth/login \
+  -H 'Content-Type: application/json' \
+  -d "{\"email\":\"you@yourcompany.com\",\"password\":\"$PW\"}" | jq -r .accessToken)
+unset PW
+
+curl -s -X POST http://127.0.0.1:3000/admin/sites \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"id":"deliva","name":"Deliva Fasta","recipient":"contact@company-one.example"}' | jq
+```
+
+The response includes `apiKey`. Configure that website to send it as
+`x-api-key`. You can reveal it again later with
+`GET /admin/sites/<id>/api-key`. To send a company's email through its own mail
+server, add `smtpHost`, `smtpPort`, `smtpUser`, `smtpPass`, and `smtpFrom`. See
+[PROJECT.md](PROJECT.md#managing-sites). These steps can also be done in the
+browser at `/docs`.
+
+Create logins for company staff, one per person, limited to their companies:
+
+```bash
+sudo docker compose --env-file .env.production -f docker-compose.yml -f docker-compose.prod.yml exec app npm run user:create:prod -- --email jane@company-one.example --name "Jane" --site deliva
 ```
 
 ## 6. Configure Nginx
@@ -213,7 +263,7 @@ interactive API reference should not be public.
 
 ## 8. Production smoke test
 
-Use a real configured site key and a new idempotency UUID:
+Use the `apiKey` of a site you created and a new idempotency UUID:
 
 ```bash
 curl --fail-with-body --request POST \
@@ -254,13 +304,20 @@ sudo docker compose --env-file .env.production \
   pg_dump -U "$DB_USER" -d "$DB_NAME" | gzip > "backups/emailservice-$(date +%F-%H%M%S).sql.gz"
 ```
 
-Copy encrypted backups off the VPS and test restoration periodically. A backup
+Copy encrypted backups off the VPS and test restoration periodically. Keep
+`SITE_SECRETS_KEY` safe separately: restored sites' API keys and SMTP passwords
+can only be decrypted with it. A backup
 that has never been restored is not yet proven. Redis contains queue state, but
 PostgreSQL is the essential durable business record.
 
 ## 10. Deploy updates
 
 Review the incoming changes and migrations, create a database backup, then:
+
+Upgrading a server that still configures sites with `SITE_<ID>_*` variables
+(before the dashboard release) needs extra one-time steps: new secrets and a
+site import. Follow [DEPLOY_DASHBOARD_AUTH.md](DEPLOY_DASHBOARD_AUTH.md) for
+that upgrade instead of the commands below.
 
 ```bash
 cd /opt/nvo-email-service
@@ -300,11 +357,13 @@ the new schema.
 - [ ] `.env.production` is mode `600` and is not committed.
 - [ ] Mailpit is absent from production.
 - [ ] Real SMTP, SPF, DKIM, and DMARC are configured.
-- [ ] `CORS_ORIGINS` contains only real website origins.
+- [ ] `CORS_ORIGINS` contains only real website origins, plus the dashboard's origin once it is deployed.
 - [ ] HTTPS works and certificate renewal has been tested.
 - [ ] Database backups run automatically and copies leave the VPS.
 - [ ] Logs and disk usage are monitored.
 - [ ] The health endpoint and a real contact submission pass after deployment.
+- [ ] `JWT_SECRET` and `SITE_SECRETS_KEY` are stored in a password manager, separately from the database backups.
+- [ ] Only the people who run the service are super-admins; company staff have company-user accounts.
 
 ## Reference documentation
 

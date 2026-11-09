@@ -10,6 +10,8 @@ import { dataSourceOptions } from './database/data-source.js';
 import { AuthModule } from './auth/auth.module.js';
 import { SitesModule } from './sites/sites.module.js';
 import { AdminModule } from './admin/admin.module.js';
+import { AppController } from './app.controller.js';
+import { AppService } from './app.service.js';
 import { RequestsModule } from './requests/requests.module.js';
 
 @Module({
@@ -38,6 +40,8 @@ import { RequestsModule } from './requests/requests.module.js';
     SitesModule,
     AdminModule,
   ],
-  providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
+  // GET / health check, used by the deployment guides' smoke tests.
+  controllers: [AppController],
+  providers: [AppService, { provide: APP_GUARD, useClass: ThrottlerGuard }],
 })
 export class AppModule {}

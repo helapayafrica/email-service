@@ -2,37 +2,58 @@
 
 ## Purpose
 
-NVO Email Service is a central contact-form backend for multiple websites. A
-website sends a validated request to `POST /contact`; the service saves it,
-queues a job, and returns immediately. A Bull worker then creates the email,
-sends it through SMTP, and records whether delivery succeeded.
+NVO Email Service is a central contact-form backend for multiple company
+websites. A website sends a validated request to `POST /contact`; the service
+saves it, queues a job, and returns immediately. A Bull worker then creates the
+email, sends it over SMTP, and records whether delivery succeeded.
+
+Company staff log in to a dashboard API to read their company's submissions.
+Super-admins, the team running the service, manage the companies themselves.
+
+## Concepts
+
+- **Site:** one company website. Stored in the `sites` table with a permanent
+  slug id (`deliva`), a display name, the recipient for its contact emails, an
+  API key, and optionally its own SMTP server. Websites send the id as `siteId`.
+- **Company user:** a dashboard login that can see the requests of the sites
+  listed in its `siteIds`. One person can belong to several companies.
+- **Super-admin:** a dashboard login that sees every site and can create, edit,
+  and deactivate sites and manage their API keys.
 
 ## Request flow
 
 ```text
 Company website
-  -> POST /contact
-  -> validation, API-key check, throttling, and idempotency check
-  -> PostgreSQL contact_requests row
+  -> POST /contact  (x-api-key, idempotency-key)
+  -> validation, throttling, API-key check (site looked up by the key's hash)
+  -> idempotency check
+  -> PostgreSQL contact_requests row (status queued) -> 202 Accepted
   -> Redis/Bull mail job
-  -> mail processor
-  -> SMTP provider
-  -> configured company recipient
+  -> mail processor loads the site's recipient and SMTP settings
+  -> the site's own SMTP server, or the global SMTP_* server
+  -> company recipient; status sent or failed
 ```
 
 PostgreSQL is the durable record. Redis holds asynchronous jobs. SMTP delivers
-the message. All three services must be available for the full flow to work.
+the message. All three must be available for the full flow to work. SMTP
+credentials are never put in the Redis job; the processor loads them from the
+database when it sends, so a retry uses the site's current settings.
 
 ## Main directories
 
 ```text
 src/
-  common/       guards and global exception formatting
-  config/       configured site lookup
-  contact/      endpoint, DTO, persistence, and queue submission
-  database/     TypeORM datasource and migrations
+  admin/        super-admin endpoints for managing sites (/admin/sites)
+  auth/         login, JWT guard, super-admin guard, @CurrentUser()
+  cli/          create-user and site:import-env command-line tools
+  common/       API-key guard and global exception formatting
+  contact/      POST /contact, DTO, persistence, and queue submission
+  database/     TypeORM data source and migrations
   mail/         Bull processor, SMTP client, and email template
-  main.ts       application security, CORS, validation, and Scalar setup
+  requests/     dashboard endpoints for reading contact requests
+  sites/        site entity, SitesService, secret encryption
+  users/        user entity, UserService, password hashing
+  main.ts       security headers, CORS, validation, and Scalar setup
 docs/           project and deployment documentation
 ```
 
@@ -41,33 +62,115 @@ docs/           project and deployment documentation
 Copy `.env.example` to `.env` for local development. Do not commit `.env` or
 real credentials.
 
-| Variable                        | Purpose                                                                |
-| ------------------------------- | ---------------------------------------------------------------------- |
-| `PORT`                          | HTTP port; defaults to `3000`                                          |
-| `APP_URL`                       | Public base URL shown in startup logs                                  |
-| `DB_HOST`, `DB_PORT`            | PostgreSQL network address                                             |
-| `DB_USER`, `DB_PASS`, `DB_NAME` | PostgreSQL credentials and database                                    |
-| `REDIS_HOST`, `REDIS_PORT`      | Redis network address                                                  |
-| `SMTP_HOST`, `SMTP_PORT`        | SMTP network address                                                   |
-| `SMTP_SECURE`                   | `true` for implicit TLS, normally port 465; `false` for STARTTLS/local |
-| `SMTP_USER`, `SMTP_PASS`        | SMTP credentials; blank for local Mailpit                              |
-| `SMTP_FROM`                     | Sender name and address                                                |
-| `CORS_ORIGINS`                  | Comma-separated website origins allowed by browsers                    |
-| `THROTTLE_TTL_MS`               | Rate-limit time window in milliseconds                                 |
-| `THROTTLE_LIMIT`                | Requests allowed per IP in the time window                             |
-| `SITE_<NAME>_APIKEY`            | API key accepted for a configured site                                 |
-| `SITE_<NAME>_RECIPIENT`         | Recipient for that site's contact messages                             |
+| Variable                        | Purpose                                                                                  |
+| ------------------------------- | ---------------------------------------------------------------------------------------- |
+| `PORT`                          | HTTP port; defaults to `3000`                                                            |
+| `APP_URL`                       | Public base URL shown in startup logs                                                    |
+| `DB_HOST`, `DB_PORT`            | PostgreSQL network address                                                               |
+| `DB_USER`, `DB_PASS`, `DB_NAME` | PostgreSQL credentials and database                                                      |
+| `REDIS_HOST`, `REDIS_PORT`      | Redis network address                                                                    |
+| `SMTP_HOST`, `SMTP_PORT`        | Global SMTP server, used by sites without SMTP settings of their own                     |
+| `SMTP_SECURE`                   | `true` for implicit TLS, normally port 465; `false` for STARTTLS/local                   |
+| `SMTP_USER`, `SMTP_PASS`        | Global SMTP credentials; blank for local Mailpit                                         |
+| `SMTP_FROM`                     | Sender for sites without their own From address                                          |
+| `CORS_ORIGINS`                  | Comma-separated browser origins allowed to call the API (websites and the dashboard)     |
+| `THROTTLE_TTL_MS`               | Rate-limit time window in milliseconds                                                   |
+| `THROTTLE_LIMIT`                | Requests allowed per IP in the time window                                               |
+| `JWT_SECRET`                    | **Required.** Signs login tokens; at least 32 characters (`openssl rand -base64 48`)     |
+| `JWT_EXPIRES_IN_SECONDS`        | Login token lifetime; defaults to `3600`                                                 |
+| `SITE_SECRETS_KEY`              | **Required.** 32 bytes, base64 (`openssl rand -base64 32`); encrypts site secrets        |
 
-The currently recognized site IDs are defined in `src/config/sites.config.ts`.
-For example, body `siteId: "deliva"` uses `SITE_DELIVA_APIKEY` and
-`SITE_DELIVA_RECIPIENT`. Both must exist or authentication fails.
+The app refuses to start if `JWT_SECRET` or `SITE_SECRETS_KEY` is missing or
+the wrong size, and Compose refuses to start without them.
 
-An API key embedded in browser JavaScript can be inspected by visitors. Treat
-these keys as site identifiers and abuse-control inputs, not as credentials that
-can safely grant access to sensitive data. Keep throttling enabled and consider
+**Back up `SITE_SECRETS_KEY` with your other secrets.** It encrypts every
+site's API key copy and SMTP password. A database backup without this key
+can't recover them: you would have to re-enter each site's SMTP password and
+issue new API keys to every website. Changing `JWT_SECRET` logs everyone out.
+
+Companies are not configured through environment variables; see
+[Managing sites](#managing-sites).
+
+## Users
+
+There is no public sign-up. Create accounts from the command line. The password
+prompt requires at least 12 characters and is shown as you type.
+
+```bash
+# In a running container (local: add -f docker-compose.dev.yml; production: see the VPS guides)
+docker compose exec app npm run user:create:prod -- --email ops@deliva.com --name "Ops" --site deliva --site voltic
+docker compose exec app npm run user:create:prod -- --email admin@example.com --name "Admin" --role super_admin
+
+# Or on the host, with the database reachable at DB_HOST
+npm run user:create -- --email ops@deliva.com --name "Ops" --site deliva
+```
+
+Each `--site` must be an existing site id. A company user needs at least one;
+a super-admin takes none. To disable a user, set `"isActive" = false` in the
+`users` table: they are locked out on their next request, without waiting for
+their token to expire.
+
+## Managing sites
+
+Super-admins manage sites through `/admin/sites` (see [API](#api)), with `curl`
+or in the browser at `/docs`.
+
+- **Create** with `POST /admin/sites`: `id`, `name`, `recipient`, and
+  optionally SMTP settings. The response includes the site's new API key. Put
+  it in the website's configuration as `x-api-key`.
+- **The id is permanent.** Websites send it, and stored requests and users
+  refer to it. Use lowercase letters, digits, and dashes, 2 to 50 characters.
+- **Own SMTP server** (optional): `smtpHost`, `smtpPort`, `smtpSecure`,
+  `smtpUser`, `smtpPass`, and `smtpFrom`. With a host set, `smtpFrom` is
+  required: a company's mail server usually rejects a sender on another domain.
+  Configure SPF, DKIM, and DMARC for that domain. Without `smtpHost` the site
+  uses the global `SMTP_*` settings; `smtpFrom` alone overrides only the sender.
+- **Edit** with `PATCH /admin/sites/:id`. Only the fields sent change. Leaving
+  out `smtpPass` keeps the stored password; `"smtpHost": null` removes the
+  site's own SMTP settings entirely.
+- **Deactivate** with `PATCH` and `"isActive": false`. Its key stops working,
+  queued emails for it fail, and its requests stay visible in the dashboard.
+  Sites are never deleted.
+- **Keys:** `GET /admin/sites/:id/api-key` reveals the current key.
+  `POST /admin/sites/:id/rotate-key` issues a new one; **the old key stops
+  working immediately**, so update the website straight away.
+
+How secrets are stored: the API key as a SHA-256 hash, used to recognise
+incoming requests, plus an AES-256-GCM encrypted copy, used for reveal. The
+SMTP password is encrypted the same way. Admin responses never contain the key
+hash or the SMTP password, only `smtp.hasPassword`. Create, update, rotate, and
+reveal are logged with the acting user's id.
+
+An API key embedded in browser JavaScript can be read by visitors. Treat these
+keys as site identifiers and abuse-control inputs, not as credentials that can
+safely grant access to sensitive data. Keep throttling enabled and consider
 CAPTCHA or server-side submission for sites that attract abuse.
 
+Sites from the old env-based setup (`SITE_<ID>_APIKEY`, `_RECIPIENT`, `_NAME`)
+can be imported once, keeping their keys:
+`npm run site:import-env -- --from-file .env`. See
+[DEPLOY_DASHBOARD_AUTH.md](DEPLOY_DASHBOARD_AUTH.md) for production.
+
 ## API
+
+The full, interactive reference is at `/docs`. Dashboard and admin endpoints
+take `Authorization: Bearer <accessToken>`. In Scalar, log in with
+`POST /auth/login` and paste the token under *Authentication*.
+
+| Endpoint                           | Who             | Purpose                                                   |
+| ---------------------------------- | --------------- | --------------------------------------------------------- |
+| `GET /`                            | anyone          | Health check                                              |
+| `POST /contact`                    | websites        | Submit a contact form (`x-api-key`, `idempotency-key`)    |
+| `POST /auth/login`                 | anyone          | Log in; returns `accessToken` and the user's sites        |
+| `GET /auth/me`                     | logged in       | The current user and the sites they can see               |
+| `GET /requests`                    | logged in       | Contact requests for the user's sites, newest first       |
+| `GET /requests/:id`                | logged in       | One contact request                                       |
+| `GET /admin/sites`                 | super-admin     | All sites, including inactive ones                        |
+| `GET /admin/sites/:id`             | super-admin     | One site                                                  |
+| `POST /admin/sites`                | super-admin     | Create a site; returns `{ site, apiKey }`                  |
+| `PATCH /admin/sites/:id`           | super-admin     | Update or deactivate a site                               |
+| `POST /admin/sites/:id/rotate-key` | super-admin     | Issue a new API key; the old one stops working            |
+| `GET /admin/sites/:id/api-key`     | super-admin     | Reveal the current API key                                |
 
 ### Health check
 
@@ -118,6 +221,80 @@ Typical accepted response:
 }
 ```
 
+The key must belong to the site named in `siteId`; a key for one site can't
+post as another. An unknown, wrong, or deactivated site's key gets `401`.
+
+### Log in
+
+```http
+POST /auth/login
+Content-Type: application/json
+
+{ "email": "ops@deliva.com", "password": "..." }
+```
+
+```json
+{
+  "accessToken": "eyJhbGciOi...",
+  "tokenType": "Bearer",
+  "expiresIn": 3600,
+  "user": {
+    "id": "6f1c...",
+    "email": "ops@deliva.com",
+    "fullName": "Ops",
+    "role": "company_user",
+    "sites": [{ "id": "deliva", "name": "Deliva Fasta" }]
+  }
+}
+```
+
+A wrong email, wrong password, and disabled account all return the same `401`.
+Login allows 5 attempts per minute per IP. `GET /auth/me` returns the same
+`user` object. The dashboard can use `sites` for its company switcher.
+
+### List contact requests
+
+```http
+GET /requests?siteId=deliva&status=failed&q=jane&page=1&limit=20
+Authorization: Bearer <accessToken>
+```
+
+All parameters are optional:
+
+- `siteId`: one of the user's sites. Leave it out to list all of them. Any
+  other site returns `404`, the same as a site that doesn't exist.
+- `status`: `pending`, `queued`, `sent`, or `failed`.
+- `q`: case-insensitive search in name, email, and subject.
+- `page` (default 1) and `limit` (default 20, at most 100).
+
+```json
+{
+  "items": [
+    {
+      "id": "b9d7895d-...",
+      "siteId": "deliva",
+      "siteName": "Deliva Fasta",
+      "fullName": "Jane Doe",
+      "email": "jane@example.com",
+      "phoneNumber": "+254700000000",
+      "company": "Acme Ltd",
+      "subject": "Website enquiry",
+      "message": "...",
+      "status": "sent",
+      "createdAt": "2026-11-09T10:30:00.000Z"
+    }
+  ],
+  "total": 1,
+  "page": 1,
+  "limit": 20
+}
+```
+
+`GET /requests/:id` returns one item, or `404` if it doesn't exist or belongs
+to a site the user can't see.
+
+### Errors
+
 Errors use a consistent body:
 
 ```json
@@ -153,8 +330,9 @@ SMTP_FROM=Website Contact <no-reply@email-service.local>
 
 The API container reaches dependencies by the Compose service names `postgres`,
 `redis`, and `mailpit`; no database or Redis host ports are required. Open
-`http://localhost:8025` to inspect captured messages. Mailpit never belongs in the
-production environment.
+`http://localhost:8025` to inspect captured messages. Mailpit never belongs in
+the production environment. The [README](../README.md#try-it-out) walks through
+creating a super-admin and a site and sending a test submission.
 
 ## Database migrations
 
@@ -193,12 +371,20 @@ npm test
 
 ### `Invalid API key or site`
 
-- Confirm the body `siteId` is recognized.
-- Confirm both site environment variables are set.
-- Confirm `x-api-key` exactly matches the site key.
-- Restart the API after changing `.env`.
+- Confirm the site exists and is active (`GET /admin/sites`). A deactivated
+  site's key gets this error; reactivate it with `PATCH /admin/sites/:id` and
+  `{"isActive": true}`.
+- Confirm `siteId` in the body is that site's id, and `x-api-key` is that
+  site's current key: `GET /admin/sites/:id/api-key`. A rotated key stops
+  working immediately.
 - In Scalar, do not provide one value under Authentication and a different
   manual `x-api-key` header.
+
+### Login returns `401` or `429`
+
+`401` means a wrong email, wrong password, or a disabled user. All three look
+the same on purpose. `429` means more than 5 attempts in a minute from one IP;
+wait a minute.
 
 ### `MaxRetriesPerRequestError`
 
@@ -213,9 +399,15 @@ after approximately 2, 4, 8, and 16 seconds.
 
 ### Request is queued but no message arrives
 
-- Inspect the API/worker logs.
-- Confirm SMTP host, port, TLS mode, and credentials.
-- Confirm the recipient environment variable for the selected site.
+- Inspect the API/worker logs (`Contact email delivery failed ...` includes the
+  SMTP error code).
+- Check whether the site has its own SMTP settings (`GET /admin/sites/:id`). If
+  it does, check those; if not, check the global `SMTP_*` settings.
+- `EAUTH` means wrong SMTP credentials. Fix them with `PATCH`; emails still
+  being retried use the new settings.
+- `Site <id> does not exist or is inactive` means the site was deactivated
+  after the form was submitted.
+- Confirm the site's `recipient`.
 - Inspect Mailpit at `http://localhost:8025` during local development.
 - Check the `status` column in `contact_requests` for `sent` or `failed`.
 
