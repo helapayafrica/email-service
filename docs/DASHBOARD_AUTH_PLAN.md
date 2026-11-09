@@ -63,7 +63,7 @@ branch is not pushed yet.
   - Statuses now live in `CONTACT_REQUEST_STATUSES` / `ContactRequestStatus` in the entity.
   - Migration `1794200000000-ContactRequestsSiteIndex`: `("siteId", "createdAt")` ascending, not DESC as first planned. `@Index` can't express DESC, so a DESC index would make `migration:generate` try to change it, and Postgres scans the btree backwards for `ORDER BY ... DESC` anyway. The index is declared on the entity too.
   - Verified against a local stack: company-user vs super-admin scoping, filters, paging, 400/401/404 cases, CORS preflight, OpenAPI.
-- [ ] **Step 5b: sites (companies) in the database, managed by super-admins.** Replaces `src/config/sites.config.ts` and the `SITE_*` env vars. Started 2026-11-09.
+- [x] **Step 5b: sites (companies) in the database, managed by super-admins.** Replaces `src/config/sites.config.ts` and the `SITE_*` env vars. Started 2026-11-09.
   - Decisions:
     - Site `id` stays a slug (`deliva`) and is the primary key, so `contact_requests.siteId` and `users.siteIds` keep working unchanged.
     - API key: SHA-256 **hash** for checking `x-api-key` (lookup by hash, no decryption) **plus** an AES-256-GCM **encrypted copy** so a super-admin can reveal it for the frontend. Generated server-side (`sk_` + 32 random bytes); rotating replaces both.
@@ -91,7 +91,8 @@ branch is not pushed yet.
       - Behaviour to know: a queued email that is retried uses the site's settings at retry time, so an SMTP change applies to emails still being retried.
       - Verified live: create/list/get/reveal, PATCH keeps the password, adding/removing own SMTP routes mail to the right server, wrong SMTP password fails with `EAUTH` and the fix delivers on retry, rotation kills the old key, deactivate/reactivate, `403` for company users, `401` without a token, `404` for unknown ids, PATCH preflight, no secrets in logs.
     - [x] F. `src/config/sites.config.ts` is deleted and `SITE_*` is gone from `docker-compose.yml`, `.env.example` and `.env.production.example`; nothing in the app reads them. Done before the first production deploy, so the import stays possible: `import-sites-from-env.ts` now scans any `SITE_<ID>_APIKEY` (id = `<ID>` lowercased, `_` → `-`), keeps the old default names, and reads `--from-file <path>` (dotenv `parse`) or the process env. In production the one-off container mounts `.env.production` read-only (see `DEPLOY_DASHBOARD_AUTH.md` step 5). Named `--from-file`, not `--env-file`, because Node 24 checks `--env-file` itself even after the script name (exit 9 for a missing file). `dotenv` is now a direct dependency. `CLAUDE.md` updated.
-    - [ ] G. Tests: secrets round-trip and tamper detection, guard by hash, per-site vs fallback SMTP, admin guard.
+    - [x] G. Tests (27 → 110): `site-secrets.spec.ts` (key format, hash, round-trip incl. unicode/empty, fresh IV, tampered IV/tag/ciphertext, wrong key, bad keys), `sites.service.spec.ts` (create validation and conflicts, hash + encrypted storage, no secrets in views, update merge rules, rotate/reveal, mail settings and port defaults, access scoping), `super-admin.guard.spec.ts`, `mail.service.spec.ts` (global vs per-site transport and From), `admin-sites.controller.spec.ts` (audit log names fields but never values or keys; DTO null rules). Guard-by-hash and processor-side SMTP were covered in D. Mutation-checked: breaking the guard's site match, leaking the key hash in views, dropping the SMTP password on update, or ignoring per-site SMTP each fails a test.
+      - Found and fixed: `SecretBox.decrypt` rejected the encryption of an empty string (empty ciphertext part looked malformed). Not reachable from the app today, but the box now round-trips every input.
 - [ ] **Step 6: configuration and docs.**
   - Production `.env.production`: generate a fresh `JWT_SECRET` with `openssl rand -base64 48`.
   - Add the dashboard's origin to `CORS_ORIGINS`.
@@ -101,7 +102,7 @@ branch is not pushed yet.
   - `UserService.create` validation: role, at least one site for a company user, unknown site, password length, duplicate email (`23505`).
   - `AuthService.login`: success, wrong password, unknown email, inactive user.
   - `JwtAuthGuard`: missing token, bad token, inactive or deleted user.
-  - `SitesService`: `accessibleSiteIds`, `create` validation, `getMailSettings` decryption.
+  - ~~`SitesService`~~: done in step 5b G.
   - The requests service scoping: a company user can't read another site's requests, and a super-admin can read every site's requests.
 - [ ] **Merge** `feature/dashboard-auth` into `main` and push. Deploy with [`DEPLOY_DASHBOARD_AUTH.md`](DEPLOY_DASHBOARD_AUTH.md): new secrets, then migrations **and** `site:import-env:prod` from the new image before switching containers (otherwise every website gets `401`).
 

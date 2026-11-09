@@ -61,8 +61,11 @@ export class SecretBox {
   }
 
   decrypt(stored: string): string {
-    const [version, iv, tag, ciphertext] = stored.split(':');
-    if (version !== FORMAT_VERSION || !iv || !tag || !ciphertext) {
+    const parts = stored.split(':');
+    const [version, iv, tag, ciphertext] = parts;
+    // The ciphertext part is legitimately empty for an empty secret, so
+    // check the shape rather than truthiness.
+    if (parts.length !== 4 || version !== FORMAT_VERSION || !iv || !tag) {
       throw new Error('Unrecognised encrypted value');
     }
     const decipher = createDecipheriv(

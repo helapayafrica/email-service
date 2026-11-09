@@ -1,0 +1,429 @@
+import {
+  BadRequestException,
+  ConflictException,
+  NotFoundException,
+} from '@nestjs/common';
+import { randomBytes } from 'node:crypto';
+import { QueryFailedError, type Repository } from 'typeorm';
+import type { AuthUser } from '../auth/auth-user.js';
+import type { Site } from './entities/site.entity.js';
+import { SecretBox, hashApiKey } from './site-secrets.js';
+import { SitesService } from './sites.service.js';
+
+const box = new SecretBox(randomBytes(32).toString('base64'));
+
+// A stored site row, with every column loaded (as loadForUpdate does).
+function site(overrides: Partial<Site> = {}): Site {
+  return {
+    id: 'acme',
+    name: 'Acme Ltd',
+    recipient: 'inbox@acme.test',
+    apiKeyHash: 'hash',
+    apiKeyEncrypted: box.encrypt('sk_current'),
+    smtpHost: null,
+    smtpPort: null,
+    smtpSecure: false,
+    smtpUser: null,
+    smtpPassEncrypted: null,
+    smtpFrom: null,
+    isActive: true,
+    createdAt: new Date('2026-11-01T00:00:00Z'),
+    updatedAt: new Date('2026-11-01T00:00:00Z'),
+    ...overrides,
+  };
+}
+
+const OWN_SMTP: Partial<Site> = {
+  smtpHost: 'smtp.acme.test',
+  smtpPort: 587,
+  smtpUser: 'mailer',
+  smtpPassEncrypted: box.encrypt('acme-smtp-pass'),
+  smtpFrom: 'Acme <no-reply@acme.test>',
+};
+
+function uniqueViolation(constraint: string): QueryFailedError {
+  return new QueryFailedError(
+    'INSERT',
+    [],
+    Object.assign(new Error('duplicate key'), { code: '23505', constraint }),
+  );
+}
+
+describe('SitesService', () => {
+  // getOne/getMany results for createQueryBuilder chains.
+  let queryResult: { one: Site | null; many: Site[] };
+  let repo: {
+    insert: ReturnType<typeof vi.fn>;
+    update: ReturnType<typeof vi.fn>;
+    find: ReturnType<typeof vi.fn>;
+    findOne: ReturnType<typeof vi.fn>;
+    createQueryBuilder: ReturnType<typeof vi.fn>;
+  };
+  let service: SitesService;
+
+  beforeEach(() => {
+    queryResult = { one: site(), many: [] };
+    const qb = {
+      addSelect: vi.fn(() => qb),
+      where: vi.fn(() => qb),
+      andWhere: vi.fn(() => qb),
+      orderBy: vi.fn(() => qb),
+      getOne: vi.fn(() => Promise.resolve(queryResult.one)),
+      getMany: vi.fn(() => Promise.resolve(queryResult.many)),
+    };
+    repo = {
+      insert: vi.fn().mockResolvedValue(undefined),
+      update: vi.fn().mockResolvedValue({ affected: 1 }),
+      find: vi.fn().mockResolvedValue([]),
+      findOne: vi.fn().mockResolvedValue(null),
+      createQueryBuilder: vi.fn(() => qb),
+    };
+    service = new SitesService(repo as unknown as Repository<Site>, box);
+  });
+
+  // The values passed to repo.insert / repo.update.
+  const inserted = () => repo.insert.mock.calls[0][0] as Partial<Site>;
+  const updated = () => repo.update.mock.calls[0][1] as Partial<Site>;
+
+  describe('create', () => {
+    const valid = { id: 'acme', name: 'Acme Ltd', recipient: 'a@acme.test' };
+
+    it('generates a key and stores only its hash and an encrypted copy', async () => {
+      const { apiKey } = await service.create(valid);
+
+      expect(apiKey).toMatch(/^sk_/);
+      expect(inserted().apiKeyHash).toBe(hashApiKey(apiKey));
+      expect(box.decrypt(inserted().apiKeyEncrypted!)).toBe(apiKey);
+      expect(JSON.stringify(inserted())).not.toContain(apiKey);
+    });
+
+    it('keeps an imported key so existing websites keep working', async () => {
+      const { apiKey } = await service.create({
+        ...valid,
+        apiKey: '  old-website-key-123  ',
+      });
+
+      expect(apiKey).toBe('old-website-key-123');
+      expect(inserted().apiKeyHash).toBe(hashApiKey('old-website-key-123'));
+    });
+
+    it('trims fields and stores no SMTP settings by default', async () => {
+      await service.create({
+        id: ' acme ',
+        name: ' Acme ',
+        recipient: valid.recipient,
+      });
+
+      expect(inserted()).toMatchObject({
+        id: 'acme',
+        name: 'Acme',
+        smtpHost: null,
+        smtpPort: null,
+        smtpSecure: false,
+        smtpUser: null,
+        smtpPassEncrypted: null,
+        smtpFrom: null,
+      });
+    });
+
+    it('encrypts the SMTP password', async () => {
+      await service.create({
+        ...valid,
+        smtpHost: 'smtp.acme.test',
+        smtpUser: 'mailer',
+        smtpPass: 'acme-smtp-pass',
+        smtpFrom: 'no-reply@acme.test',
+      });
+
+      expect(box.decrypt(inserted().smtpPassEncrypted!)).toBe('acme-smtp-pass');
+      expect(JSON.stringify(inserted())).not.toContain('acme-smtp-pass');
+    });
+
+    it('returns a view without any secrets', async () => {
+      queryResult.one = site(OWN_SMTP);
+      const { site: view } = await service.create(valid);
+
+      expect(view).not.toHaveProperty('apiKeyHash');
+      expect(view).not.toHaveProperty('apiKeyEncrypted');
+      expect(view).not.toHaveProperty('smtpPassEncrypted');
+      expect(JSON.stringify(view)).not.toContain('v1:');
+      expect(view.smtp).toEqual({
+        host: 'smtp.acme.test',
+        port: 587,
+        secure: false,
+        user: 'mailer',
+        hasPassword: true,
+      });
+    });
+
+    it.each([
+      ['an id with capitals', { id: 'Acme' }, 'Site id must be'],
+      ['a one-character id', { id: 'a' }, 'Site id must be'],
+      ['an id starting with a dash', { id: '-acme' }, 'Site id must be'],
+      ['an empty name', { name: '   ' }, 'Name is required'],
+      ['a long name', { name: 'x'.repeat(151) }, 'Name is required'],
+      ['an invalid recipient', { recipient: 'nope' }, 'Recipient must be'],
+      ['a short imported key', { apiKey: 'short' }, 'API key must be'],
+      ['a port without a host', { smtpPort: 25 }, 'SMTP host is required'],
+      ['a user without a host', { smtpUser: 'u' }, 'SMTP host is required'],
+      [
+        'a port out of range',
+        { smtpHost: 'h', smtpFrom: 'a@b.test', smtpPort: 70000 },
+        'SMTP port must be',
+      ],
+      [
+        'a password without a user',
+        { smtpHost: 'h', smtpFrom: 'a@b.test', smtpPass: 'p' },
+        'SMTP password needs an SMTP user',
+      ],
+      [
+        'a host without a From address',
+        { smtpHost: 'h' },
+        'SMTP From address is required',
+      ],
+      [
+        'a From without an email address',
+        { smtpFrom: 'Acme Ltd' },
+        'SMTP From must be an email address',
+      ],
+    ])('rejects %s', async (_case, overrides, message) => {
+      const result = service.create({ ...valid, ...overrides });
+
+      await expect(result).rejects.toThrow(BadRequestException);
+      await expect(result).rejects.toThrow(message);
+      expect(repo.insert).not.toHaveBeenCalled();
+    });
+
+    it('accepts a From with a display name', async () => {
+      await expect(
+        service.create({ ...valid, smtpFrom: 'Acme Ltd <no-reply@acme.test>' }),
+      ).resolves.toBeDefined();
+    });
+
+    it('reports a duplicate id', async () => {
+      repo.insert.mockRejectedValue(uniqueViolation('PK_4f5eccb1'));
+
+      await expect(service.create(valid)).rejects.toThrow(
+        new ConflictException('A site with id acme already exists'),
+      );
+    });
+
+    it('reports a duplicate API key', async () => {
+      repo.insert.mockRejectedValue(uniqueViolation('UQ_fb741868'));
+
+      await expect(service.create(valid)).rejects.toThrow(
+        'That API key is already used by another site',
+      );
+    });
+
+    it('rethrows other database errors', async () => {
+      repo.insert.mockRejectedValue(new Error('connection lost'));
+
+      await expect(service.create(valid)).rejects.toThrow('connection lost');
+    });
+  });
+
+  describe('update', () => {
+    it('changes only the fields sent and keeps the SMTP password', async () => {
+      queryResult.one = site(OWN_SMTP);
+
+      await service.update('acme', { name: ' Acme Limited ' });
+
+      expect(updated()).toMatchObject({
+        name: 'Acme Limited',
+        smtpHost: 'smtp.acme.test',
+        smtpUser: 'mailer',
+        smtpPassEncrypted: OWN_SMTP.smtpPassEncrypted,
+      });
+      expect(updated()).not.toHaveProperty('recipient');
+      expect(updated()).not.toHaveProperty('isActive');
+    });
+
+    it('replaces the password when a new one is sent', async () => {
+      queryResult.one = site(OWN_SMTP);
+
+      await service.update('acme', { smtpPass: 'new-pass' });
+
+      expect(box.decrypt(updated().smtpPassEncrypted!)).toBe('new-pass');
+    });
+
+    it('removes all own SMTP settings when smtpHost is cleared', async () => {
+      queryResult.one = site(OWN_SMTP);
+
+      await service.update('acme', { smtpHost: null });
+
+      expect(updated()).toMatchObject({
+        smtpHost: null,
+        smtpPort: null,
+        smtpSecure: false,
+        smtpUser: null,
+        smtpPassEncrypted: null,
+        smtpFrom: null,
+      });
+    });
+
+    it('removes the password when the user is removed', async () => {
+      queryResult.one = site(OWN_SMTP);
+
+      await service.update('acme', { smtpUser: '' });
+
+      expect(updated()).toMatchObject({
+        smtpUser: null,
+        smtpPassEncrypted: null,
+      });
+    });
+
+    it('validates the merged settings, not just the request', async () => {
+      queryResult.one = site(); // no SMTP host
+
+      await expect(
+        service.update('acme', { smtpUser: 'u', smtpPass: 'p' }),
+      ).rejects.toThrow('SMTP host is required');
+      expect(repo.update).not.toHaveBeenCalled();
+    });
+
+    it('deactivates a site', async () => {
+      await service.update('acme', { isActive: false });
+
+      expect(updated()).toMatchObject({ isActive: false });
+    });
+
+    it.each([
+      ['an empty name', { name: '' }],
+      ['an invalid recipient', { recipient: 'nope' }],
+    ])('rejects %s', async (_case, input) => {
+      await expect(service.update('acme', input)).rejects.toThrow(
+        BadRequestException,
+      );
+    });
+
+    it('returns 404 for an unknown site', async () => {
+      queryResult.one = null;
+
+      await expect(service.update('nope', { name: 'x' })).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+  });
+
+  describe('API keys', () => {
+    it('rotates to a new key, replacing the hash and the encrypted copy', async () => {
+      const apiKey = await service.rotateApiKey('acme');
+
+      expect(repo.update).toHaveBeenCalledWith(
+        { id: 'acme' },
+        expect.objectContaining({ apiKeyHash: hashApiKey(apiKey) }),
+      );
+      expect(box.decrypt(updated().apiKeyEncrypted!)).toBe(apiKey);
+    });
+
+    it('returns 404 when rotating an unknown site', async () => {
+      repo.update.mockResolvedValue({ affected: 0 });
+
+      await expect(service.rotateApiKey('nope')).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
+    it('reveals the current key by decrypting the stored copy', async () => {
+      await expect(service.revealApiKey('acme')).resolves.toBe('sk_current');
+    });
+
+    it('returns 404 when revealing an unknown site', async () => {
+      queryResult.one = null;
+
+      await expect(service.revealApiKey('nope')).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
+    it('looks up an active site by the hash of the key', async () => {
+      await service.findActiveByApiKey('sk_current');
+
+      expect(repo.findOne).toHaveBeenCalledWith({
+        where: { apiKeyHash: hashApiKey('sk_current'), isActive: true },
+      });
+    });
+  });
+
+  describe('getMailSettings', () => {
+    it('returns null for a missing or inactive site', async () => {
+      queryResult.one = null;
+
+      await expect(service.getMailSettings('acme')).resolves.toBeNull();
+    });
+
+    it('uses the global SMTP for a site without its own host', async () => {
+      await expect(service.getMailSettings('acme')).resolves.toEqual({
+        siteId: 'acme',
+        name: 'Acme Ltd',
+        recipient: 'inbox@acme.test',
+        smtp: null,
+        from: null,
+      });
+    });
+
+    it("decrypts the site's own SMTP password", async () => {
+      queryResult.one = site(OWN_SMTP);
+
+      const settings = await service.getMailSettings('acme');
+
+      expect(settings?.smtp).toEqual({
+        host: 'smtp.acme.test',
+        port: 587,
+        secure: false,
+        user: 'mailer',
+        pass: 'acme-smtp-pass',
+      });
+      expect(settings?.from).toBe('Acme <no-reply@acme.test>');
+    });
+
+    it.each([
+      [true, 465],
+      [false, 587],
+    ])('defaults the port when secure=%s to %i', async (secure, port) => {
+      queryResult.one = site({
+        ...OWN_SMTP,
+        smtpPort: null,
+        smtpSecure: secure,
+      });
+
+      const settings = await service.getMailSettings('acme');
+
+      expect(settings?.smtp?.port).toBe(port);
+    });
+  });
+
+  describe('access', () => {
+    const user = (overrides: Partial<AuthUser>): AuthUser => ({
+      id: 'u1',
+      email: 'u@example.com',
+      fullName: 'U',
+      role: 'company_user',
+      siteIds: ['acme'],
+      ...overrides,
+    });
+
+    it('gives a company user only their own sites, without a query', async () => {
+      await expect(service.accessibleSiteIds(user({}))).resolves.toEqual([
+        'acme',
+      ]);
+      expect(repo.find).not.toHaveBeenCalled();
+    });
+
+    it('gives a super-admin every site, including inactive ones', async () => {
+      repo.find.mockResolvedValue([{ id: 'acme' }, { id: 'deliva' }]);
+
+      await expect(
+        service.accessibleSiteIds(user({ role: 'super_admin', siteIds: [] })),
+      ).resolves.toEqual(['acme', 'deliva']);
+      // No isActive filter: old requests of inactive sites stay visible.
+      expect(repo.find.mock.calls[0][0]).not.toHaveProperty('where');
+    });
+
+    it('skips the query for an empty id list', async () => {
+      await expect(service.namesById([])).resolves.toEqual(new Map());
+      expect(repo.find).not.toHaveBeenCalled();
+    });
+  });
+});
