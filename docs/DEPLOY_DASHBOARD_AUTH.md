@@ -11,7 +11,7 @@ release. Follow it once, in order. Allow about 20 minutes.
 |---|---|
 | Database | Four new migrations: `users` table, user roles and sites, an index on `contact_requests`, and the `sites` table. They are additive: existing tables and data are not changed. |
 | Sites | Companies now live in the `sites` table instead of the `SITE_*` env vars. Each site's API key is stored as a hash plus an encrypted copy. A site can have its own SMTP server. |
-| Dashboard API | `POST /auth/login`, `GET /auth/me`, `GET /requests`, `GET /requests/:id`, all using a bearer token. |
+| Dashboard API | `POST /auth/login`, `GET /auth/me`, `GET /requests`, `GET /requests/:id`, and for super-admins `/admin/sites` (create, edit, deactivate, rotate and reveal keys), all using a bearer token. |
 | Configuration | Three new env vars: `JWT_SECRET`, `JWT_EXPIRES_IN_SECONDS`, `SITE_SECRETS_KEY`. Compose refuses to start without `JWT_SECRET` and `SITE_SECRETS_KEY`. |
 | Websites | Nothing changes for them. Each site keeps its current API key, so contact forms keep working. |
 
@@ -225,6 +225,26 @@ submissions. Login allows 5 attempts per minute, so `429` means wait a minute.
 dcp exec app npm run user:create:prod -- --email jane@deliva.com --name "Jane" --site deliva
 ```
 
+**Manage sites** (optional). With the super-admin `$TOKEN` from above, or
+interactively at `https://<your API host>/docs` under *Admin: sites*:
+
+```bash
+# List sites (never shows keys or SMTP passwords)
+curl -s http://127.0.0.1:3000/admin/sites -H "Authorization: Bearer $TOKEN" | jq
+
+# Reveal a site's key, e.g. to configure its website
+curl -s http://127.0.0.1:3000/admin/sites/deliva/api-key -H "Authorization: Bearer $TOKEN" | jq -r .apiKey
+
+# Give a company its own mail server. Test it with one contact form afterwards.
+curl -s -X PATCH http://127.0.0.1:3000/admin/sites/deliva -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"smtpHost":"smtp.deliva.com","smtpPort":587,"smtpUser":"mailer@deliva.com",
+       "smtpPass":"<password>","smtpFrom":"Deliva Fasta <no-reply@deliva.com>"}' | jq .smtp
+```
+
+Avoid `rotate-key` on a live site unless you can update its website straight
+away: the old key stops working immediately.
+
 ## 8. Finish
 
 - Keep the backup from step 1 until the release has run cleanly for a few days.
@@ -266,10 +286,6 @@ dcp up -d --build
 
 These are planned in [`DASHBOARD_AUTH_PLAN.md`](DASHBOARD_AUTH_PLAN.md):
 
-- **Super-admin endpoints for sites** (`/admin/sites`): create sites, edit them
-  (including per-company SMTP), deactivate them, rotate keys and reveal keys.
-  Until then, sites come only from the import, and all of them use the global
-  `SMTP_*` settings.
 - **Removing the `SITE_*` env vars.** Do this only after the release has run
   cleanly, because rollback needs them.
 - **Dashboard frontend.** When it exists, add its origin to `CORS_ORIGINS`.

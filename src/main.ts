@@ -45,7 +45,7 @@ async function bootstrap() {
       allowedOrigins.length > 0
         ? allowedOrigins
         : process.env.NODE_ENV !== 'production',
-    methods: ['GET', 'POST', 'OPTIONS'],
+    methods: ['GET', 'POST', 'PATCH', 'OPTIONS'],
     allowedHeaders: [
       'Content-Type',
       'X-API-Key',
