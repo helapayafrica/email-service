@@ -3,6 +3,7 @@ import type { Job } from 'bull';
 import type { ContactService } from '../contact/contact.service.js';
 import { MailProcessor } from './mail.processor.js';
 import type { MailService } from './mail.service.js';
+import type { SiteMailSettings, SitesService } from '../sites/sites.service.js';
 
 describe('MailProcessor', () => {
   const job = {
@@ -13,7 +14,6 @@ describe('MailProcessor', () => {
       contactId: 'contact-1',
       receivedAt: '2026-09-24T10:30:00.000Z',
       sourceName: 'Deliva Fasta',
-      to: 'recipient@example.com',
       from: 'sender@example.com',
       fullName: '<script>Jane</script>',
       phoneNumber: '+254700000000',
@@ -26,16 +26,33 @@ describe('MailProcessor', () => {
 
   let mailService: { send: ReturnType<typeof vi.fn> };
   let contactService: { updateStatus: ReturnType<typeof vi.fn> };
+  let sites: { getMailSettings: ReturnType<typeof vi.fn> };
   let processor: MailProcessor;
+
+  const ownSmtp: SiteMailSettings = {
+    siteId: 'deliva',
+    name: 'Deliva Fasta',
+    recipient: 'recipient@example.com',
+    smtp: {
+      host: 'smtp.deliva.example',
+      port: 465,
+      secure: true,
+      user: 'mailer',
+      pass: 'decrypted-password',
+    },
+    from: 'Deliva <no-reply@deliva.example>',
+  };
 
   beforeEach(() => {
     vi.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
     vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
     mailService = { send: vi.fn().mockResolvedValue(undefined) };
     contactService = { updateStatus: vi.fn().mockResolvedValue(undefined) };
+    sites = { getMailSettings: vi.fn().mockResolvedValue(ownSmtp) };
     processor = new MailProcessor(
       mailService as unknown as MailService,
       contactService as unknown as ContactService,
+      sites as unknown as SitesService,
     );
   });
 
@@ -47,7 +64,10 @@ describe('MailProcessor', () => {
     await processor.handleSendEmail(job);
 
     expect(mailService.send).toHaveBeenCalledOnce();
-    const [, , html, text, replyTo] = mailService.send.mock.calls[0];
+    const [to, , html, text, replyTo, sender] = mailService.send.mock.calls[0];
+    expect(sites.getMailSettings).toHaveBeenCalledWith('deliva');
+    expect(to).toBe('recipient@example.com');
+    expect(sender).toEqual({ smtp: ownSmtp.smtp, from: ownSmtp.from });
     expect(html).toContain('&lt;script&gt;Jane&lt;/script&gt;');
     expect(html).not.toContain('contact-1');
     expect(html).toContain('Deliva Fasta');
@@ -71,6 +91,32 @@ describe('MailProcessor', () => {
     mailService.send.mockRejectedValue(deliveryError);
 
     await expect(processor.handleSendEmail(job)).rejects.toBe(deliveryError);
+    expect(contactService.updateStatus).toHaveBeenCalledWith(
+      'contact-1',
+      'failed',
+    );
+  });
+
+  it('passes no SMTP override for a site that uses the global settings', async () => {
+    sites.getMailSettings.mockResolvedValue({
+      ...ownSmtp,
+      smtp: null,
+      from: null,
+    });
+
+    await processor.handleSendEmail(job);
+
+    const sender = mailService.send.mock.calls[0][5];
+    expect(sender).toEqual({ smtp: null, from: null });
+  });
+
+  it('marks the request failed and rethrows when the site is missing or inactive', async () => {
+    sites.getMailSettings.mockResolvedValue(null);
+
+    await expect(processor.handleSendEmail(job)).rejects.toThrow(
+      'Site deliva does not exist or is inactive',
+    );
+    expect(mailService.send).not.toHaveBeenCalled();
     expect(contactService.updateStatus).toHaveBeenCalledWith(
       'contact-1',
       'failed',

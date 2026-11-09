@@ -4,17 +4,27 @@ import {
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
-import { getSiteConfig } from '../../config/sites.config.js';
+import type { Request } from 'express';
+import { SitesService } from '../../sites/sites.service.js';
 
 @Injectable()
 export class ApiKeyGuard implements CanActivate {
-  canActivate(context: ExecutionContext): boolean {
-    const req = context.switchToHttp().getRequest();
-    const siteId = req.body?.siteId;
+  constructor(private readonly sites: SitesService) {}
+
+  async canActivate(context: ExecutionContext): Promise<boolean> {
+    const req = context.switchToHttp().getRequest<Request>();
+    const body = req.body as { siteId?: unknown } | undefined;
+    const siteId = body?.siteId;
     const apiKey = req.headers['x-api-key'];
 
-    const site = getSiteConfig(siteId);
-    if (!site || !apiKey || apiKey !== site.apiKey) {
+    if (typeof siteId !== 'string' || typeof apiKey !== 'string' || !apiKey) {
+      throw new UnauthorizedException('Invalid API key or site');
+    }
+
+    // Find the site by the key's hash, then check it is the site the body
+    // claims. A valid key for one site can't post as another.
+    const site = await this.sites.findActiveByApiKey(apiKey);
+    if (!site || site.id !== siteId) {
       throw new UnauthorizedException('Invalid API key or site');
     }
     return true;

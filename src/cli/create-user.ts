@@ -7,6 +7,9 @@ import {
   type UserRole,
 } from '../users/entities/user.entity.js';
 import { UserService } from '../users/user.service.js';
+import { Site } from '../sites/entities/site.entity.js';
+import { SecretBox } from '../sites/site-secrets.js';
+import { SitesService } from '../sites/sites.service.js';
 
 const usage = `Usage:
   npm run user:create -- --email <email> --name "<full name>" --site <siteId> [--site <siteId> ...]
@@ -34,7 +37,11 @@ rl.close();
 
 await dataSource.initialize();
 try {
-  const users = new UserService(dataSource.getRepository(User));
+  const sites = new SitesService(
+    dataSource.getRepository(Site),
+    new SecretBox(process.env.SITE_SECRETS_KEY),
+  );
+  const users = new UserService(dataSource.getRepository(User), sites);
   const user = await users.create({
     email: values.email,
     fullName: values.name,

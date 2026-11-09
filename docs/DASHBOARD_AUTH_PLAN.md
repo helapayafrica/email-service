@@ -77,7 +77,12 @@ branch is not pushed yet.
     - [x] B. `Site` entity (`src/sites/entities/site.entity.ts`) + migration `1794300000000-CreateSites`. `id` is a slug enforced by `CHK_sites_id_slug` (2–50 chars, `a-z0-9-`); `apiKeyHash` is unique; `apiKeyHash`, `apiKeyEncrypted` and `smtpPassEncrypted` are `select: false`. Registered in `data-source.ts`.
     - [x] C. `SitesService` (`findById`, `findActiveByApiKey`, `list`, `create`) + `SitesModule` (provides `SecretBox` from `SITE_SECRETS_KEY`; the app refuses to start without it), registered in `AppModule`. CLI `npm run site:import-env` / `site:import-env:prod` (`src/cli/import-sites-from-env.ts`) copies sites from `SITE_*` env vars with their current API keys; skips sites already in the table or missing env vars, never overwrites. `create` uses `insert`, not `save`, because `save` with a hand-picked primary key would overwrite an existing site.
       - Also fixed: `ContactRequest.fullName` now declares `length: 150` to match the database. Before, `migration:generate` would have dropped and re-added the column, losing every name. `migration:generate --check` now reports no changes.
-    - [ ] D. Switch consumers to `SitesService`: `ApiKeyGuard`, `ContactService`, `MailProcessor` / `MailService` (per-site transport), `AuthService`, `RequestsService`, `site-access.ts`, `UserService`.
+    - [x] D. Everything reads sites from the database; only `import-sites-from-env.ts` still uses `sites.config.ts` (removed in F).
+      - `ApiKeyGuard` looks the site up by the key's hash and requires it to match `body.siteId`; inactive sites get `401`.
+      - `ContactService` rejects missing or inactive sites. The Bull job no longer carries the recipient: `MailProcessor` calls `SitesService.getMailSettings(siteId)` at send time (the only place the SMTP password is decrypted), so credentials never reach Redis and edited settings apply to retries.
+      - `MailService.send(..., sender)` builds a transport from the site's SMTP, or uses the global `SMTP_*` transport when the site has none; `From` is the site's `smtpFrom` or `SMTP_FROM`. `SitesService.create` now requires `smtpFrom` whenever `smtpHost` is set.
+      - `src/auth/site-access.ts` is gone: `SitesService.accessibleSiteIds(user)` (super-admins get every site, including inactive ones) and `namesById(ids)` replace it. `AuthService.profile` is now async. `UserService` validates `siteIds` against the table (`existingIds`), and `create-user` builds a `SitesService`.
+      - Verified end to end with two Mailpit servers: a global-SMTP site and an own-SMTP site (with SMTP auth) each delivered to their own recipient from their own From address; a key for one site posting as another, a wrong key, an unknown site and a deactivated site all got `401`; `/auth/me` and `/requests` show names from the table; no secrets in logs.
     - [ ] E. `SuperAdminGuard` and `/admin/sites`: list, get, create, update, deactivate, `POST :id/rotate-key`, `GET :id/api-key`.
     - [ ] F. Remove `sites.config.ts` and the `SITE_*` vars (after import has run in production); update `CLAUDE.md`.
     - [ ] G. Tests: secrets round-trip and tamper detection, guard by hash, per-site vs fallback SMTP, admin guard.
@@ -90,9 +95,9 @@ branch is not pushed yet.
   - `UserService.create` validation: role, at least one site for a company user, unknown site, password length, duplicate email (`23505`).
   - `AuthService.login`: success, wrong password, unknown email, inactive user.
   - `JwtAuthGuard`: missing token, bad token, inactive or deleted user.
-  - `site-access.ts`.
+  - `SitesService`: `accessibleSiteIds`, `create` validation, `getMailSettings` decryption.
   - The requests service scoping: a company user can't read another site's requests, and a super-admin can read every site's requests.
-- [ ] **Merge** `feature/dashboard-auth` into `main` and push. Deploy, which runs the migrations automatically.
+- [ ] **Merge** `feature/dashboard-auth` into `main` and push. Deploy with [`DEPLOY_DASHBOARD_AUTH.md`](DEPLOY_DASHBOARD_AUTH.md): new secrets, then migrations **and** `site:import-env:prod` from the new image before switching containers (otherwise every website gets `401`).
 
 ### Later or optional
 

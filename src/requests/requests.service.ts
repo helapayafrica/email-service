@@ -2,9 +2,8 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Brackets, In, Repository } from 'typeorm';
 import { ContactRequest } from '../contact/entities/contact-request.entity.js';
-import { getSiteName } from '../config/sites.config.js';
+import { SitesService } from '../sites/sites.service.js';
 import type { AuthUser } from '../auth/auth-user.js';
-import { accessibleSiteIds, canAccessSite } from '../auth/site-access.js';
 import type { ListRequestsQuery } from './dto/list-requests.query.js';
 
 // What the dashboard sees. idempotencyKey is internal and left out.
@@ -29,11 +28,11 @@ export interface RequestPage {
   limit: number;
 }
 
-function toView(row: ContactRequest): RequestView {
+function toView(row: ContactRequest, names: Map<string, string>): RequestView {
   return {
     id: row.id,
     siteId: row.siteId,
-    siteName: getSiteName(row.siteId),
+    siteName: names.get(row.siteId) ?? row.siteId,
     fullName: row.fullName,
     email: row.email,
     phoneNumber: row.phoneNumber,
@@ -55,15 +54,16 @@ export class RequestsService {
   constructor(
     @InjectRepository(ContactRequest)
     private readonly requests: Repository<ContactRequest>,
+    private readonly sites: SitesService,
   ) {}
 
   async list(user: AuthUser, query: ListRequestsQuery): Promise<RequestPage> {
     const { page, limit } = query;
 
-    let siteIds = accessibleSiteIds(user);
+    let siteIds = await this.sites.accessibleSiteIds(user);
     if (query.siteId !== undefined) {
       // 404 rather than 403: don't confirm that another company's site exists.
-      if (!canAccessSite(user, query.siteId)) {
+      if (!siteIds.includes(query.siteId)) {
         throw new NotFoundException('Site not found');
       }
       siteIds = [query.siteId];
@@ -101,11 +101,17 @@ export class RequestsService {
       .take(limit)
       .getManyAndCount();
 
-    return { items: rows.map(toView), total, page, limit };
+    const names = await this.sites.namesById(rows.map((row) => row.siteId));
+    return {
+      items: rows.map((row) => toView(row, names)),
+      total,
+      page,
+      limit,
+    };
   }
 
   async findOne(user: AuthUser, id: string): Promise<RequestView> {
-    const siteIds = accessibleSiteIds(user);
+    const siteIds = await this.sites.accessibleSiteIds(user);
     // The site filter is part of the lookup, so another tenant's row and a
     // missing row both come back as null and look identical to the caller.
     const row =
@@ -115,6 +121,6 @@ export class RequestsService {
     if (!row) {
       throw new NotFoundException('Contact request not found');
     }
-    return toView(row);
+    return toView(row, await this.sites.namesById([row.siteId]));
   }
 }

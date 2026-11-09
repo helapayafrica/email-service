@@ -2,11 +2,10 @@ import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { UserService } from '../users/user.service.js';
 import { hashPassword, verifyPassword } from '../users/password.js';
-import { getSiteName } from '../config/sites.config.js';
+import { SitesService } from '../sites/sites.service.js';
 import type { LoginDto } from './dto/login.dto.js';
 import type { JwtPayload } from './jwt-payload.js';
 import type { AuthUser } from './auth-user.js';
-import { accessibleSiteIds } from './site-access.js';
 
 @Injectable()
 export class AuthService {
@@ -20,6 +19,7 @@ export class AuthService {
   constructor(
     private readonly users: UserService,
     private readonly jwt: JwtService,
+    private readonly sites: SitesService,
   ) {}
 
   async login(dto: LoginDto) {
@@ -43,7 +43,7 @@ export class AuthService {
       accessToken,
       tokenType: 'Bearer' as const,
       expiresIn: Number(process.env.JWT_EXPIRES_IN_SECONDS ?? 3600),
-      user: this.profile({
+      user: await this.profile({
         id: user.id,
         email: user.email,
         fullName: user.fullName,
@@ -54,16 +54,15 @@ export class AuthService {
   }
 
   // What the dashboard gets: who you are, plus the companies you can switch between.
-  profile(user: AuthUser) {
+  async profile(user: AuthUser) {
+    const siteIds = await this.sites.accessibleSiteIds(user);
+    const names = await this.sites.namesById(siteIds);
     return {
       id: user.id,
       email: user.email,
       fullName: user.fullName,
       role: user.role,
-      sites: accessibleSiteIds(user).map((id) => ({
-        id,
-        name: getSiteName(id),
-      })),
+      sites: siteIds.map((id) => ({ id, name: names.get(id) ?? id })),
     };
   }
 }

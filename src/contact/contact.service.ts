@@ -5,7 +5,7 @@ import { InjectQueue } from '@nestjs/bull';
 import type { Queue } from 'bull';
 import { ContactRequest } from './entities/contact-request.entity.js';
 import { CreateContactDto } from './dto/create-contact.dto.js';
-import { getSiteConfig } from '../config/sites.config.js';
+import { SitesService } from '../sites/sites.service.js';
 
 @Injectable()
 export class ContactService {
@@ -15,6 +15,7 @@ export class ContactService {
     @InjectRepository(ContactRequest)
     private readonly repo: Repository<ContactRequest>,
     @InjectQueue('mail') private readonly mailQueue: Queue,
+    private readonly sites: SitesService,
   ) {}
 
   async handleContact(dto: CreateContactDto, idempotencyKey: string) {
@@ -37,8 +38,10 @@ export class ContactService {
       };
     }
 
-    const site = getSiteConfig(dto.siteId);
-    if (!site) {
+    // ApiKeyGuard already matched the key to this site; this also covers a
+    // site deactivated in between, and callers that skip the guard.
+    const site = await this.sites.findById(dto.siteId);
+    if (!site || !site.isActive) {
       throw new BadRequestException('Unknown or unconfigured site');
     }
 
@@ -63,7 +66,6 @@ export class ContactService {
       record.createdAt ?? new Date(),
       dto,
       site.name,
-      site.recipient,
     ).catch(async (error: unknown) => {
       const stack = error instanceof Error ? error.stack : String(error);
       this.logger.error(
@@ -88,15 +90,16 @@ export class ContactService {
     receivedAt: Date,
     dto: CreateContactDto,
     sourceName: string,
-    recipient: string,
   ): Promise<void> {
     const job = await this.mailQueue.add(
       'send-contact-email',
       {
         contactId,
         receivedAt: receivedAt.toISOString(),
+        // The recipient and SMTP settings are not in the job: MailProcessor
+        // loads them from the sites table when it sends, so SMTP credentials
+        // never sit in Redis.
         sourceName,
-        to: recipient,
         from: dto.email,
         fullName: dto.fullName,
         phoneNumber: dto.phoneNumber,

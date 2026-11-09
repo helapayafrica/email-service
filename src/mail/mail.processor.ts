@@ -3,12 +3,12 @@ import { Logger } from '@nestjs/common';
 import type { Job } from 'bull';
 import { MailService } from './mail.service.js';
 import { ContactService } from '../contact/contact.service.js';
+import { SitesService } from '../sites/sites.service.js';
 
 interface ContactEmailJob {
   contactId: string;
   receivedAt: string;
   sourceName: string;
-  to: string;
   from: string;
   fullName: string;
   phoneNumber: string;
@@ -46,6 +46,7 @@ export class MailProcessor {
   constructor(
     private readonly mailService: MailService,
     private readonly contactService: ContactService,
+    private readonly sites: SitesService,
   ) {}
 
   @Process('send-contact-email')
@@ -54,7 +55,6 @@ export class MailProcessor {
       contactId,
       receivedAt,
       sourceName,
-      to,
       from,
       fullName,
       phoneNumber,
@@ -183,7 +183,21 @@ export class MailProcessor {
     ].join('\n');
 
     try {
-      const result = await this.mailService.send(to, subject, html, text, from);
+      // Loaded at send time, not stored in the job, so SMTP credentials never
+      // sit in Redis and edited settings apply to retries too. Inside the try
+      // so a missing site marks the request failed like any other error.
+      const settings = await this.sites.getMailSettings(siteId);
+      if (!settings) {
+        throw new Error(`Site ${siteId} does not exist or is inactive`);
+      }
+      const result = await this.mailService.send(
+        settings.recipient,
+        subject,
+        html,
+        text,
+        from,
+        { smtp: settings.smtp, from: settings.from },
+      );
       await this.contactService.updateStatus(contactId, 'sent');
       this.logger.log(
         `Contact email delivered requestId=${contactId} jobId=${String(job.id)} siteId=${siteId} attempt=${attempt}/${maxAttempts} messageId=${String(result?.messageId ?? 'unknown')} accepted=${result?.accepted?.length ?? 0} rejected=${result?.rejected?.length ?? 0}`,

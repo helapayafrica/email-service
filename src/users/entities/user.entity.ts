@@ -23,7 +23,7 @@ export class User {
   @Column({ type: 'varchar', default: 'company_user' })
   role: UserRole;
 
-  // Companies this user can see (keys from sites.config.ts).
+  // Companies this user can see (ids from the sites table).
   // Ignored for super_admin, who can see every company.
   @Column({ type: 'text', array: true, default: () => "'{}'" })
   siteIds: string[];

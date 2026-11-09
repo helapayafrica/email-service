@@ -8,7 +8,7 @@ import { QueryFailedError, Repository } from 'typeorm';
 import { User, USER_ROLES, type UserRole } from './entities/user.entity.js';
 import { isEmail } from 'class-validator';
 import { hashPassword } from './password.js';
-import { isKnownSite } from '../config/sites.config.js';
+import { SitesService } from '../sites/sites.service.js';
 
 export const MIN_PASSWORD_LENGTH = 12;
 
@@ -28,6 +28,7 @@ export function normalizeEmail(email: string): string {
 export class UserService {
   constructor(
     @InjectRepository(User) private readonly repo: Repository<User>,
+    private readonly sites: SitesService,
   ) {}
 
   findById(id: string): Promise<User | null> {
@@ -69,7 +70,8 @@ export class UserService {
     if (input.role === 'company_user' && siteIds.length === 0) {
       throw new BadRequestException('A company user needs at least one site');
     }
-    const unknown = siteIds.filter((siteId) => !isKnownSite(siteId));
+    const existing = new Set(await this.sites.existingIds(siteIds));
+    const unknown = siteIds.filter((siteId) => !existing.has(siteId));
     if (unknown.length > 0) {
       throw new BadRequestException(`Unknown site(s): ${unknown.join(', ')}`);
     }

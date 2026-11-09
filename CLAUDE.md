@@ -50,7 +50,7 @@ Key points that span multiple files:
 - Schema changes go through TypeORM migrations only (`synchronize: false`). The migration CLI runs against compiled `dist/database/data-source.js`, so migration scripts build first. The Docker image runs pending migrations at container start (`start:prod:migrate`).
 - `typescript/no-floating-promises` is an error in oxlint — intentionally detached promises must be prefixed with `void`.
 - Unit tests construct services directly with hand-rolled mocks (`vi.fn()`, globals enabled) rather than via Nest's testing module.
-- Mailpit exists only in `docker-compose.dev.yml`; production uses `docker-compose.prod.yml` with `.env.production` (`npm run prod:up`). Deployment details: `docs/VPS_DEPLOYMENT.md`, `docs/VPS_IP_DEPLOYMENT.md`.
+- Mailpit exists only in `docker-compose.dev.yml`; production uses `docker-compose.prod.yml` with `.env.production` (`npm run prod:up`). Deployment details: `docs/VPS_DEPLOYMENT.md`, `docs/VPS_IP_DEPLOYMENT.md`. Upgrading an existing server to the dashboard-auth release (new secrets, migrations, site import): `docs/DEPLOY_DASHBOARD_AUTH.md`.
 
 ## In-progress work
 

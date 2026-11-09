@@ -1,43 +1,50 @@
 import { UnauthorizedException, type ExecutionContext } from '@nestjs/common';
+import type { SitesService } from '../../sites/sites.service.js';
 import { ApiKeyGuard } from './api-key.guard.js';
 
 describe('ApiKeyGuard', () => {
-  const originalEnvironment = { ...process.env };
+  let sites: { findActiveByApiKey: ReturnType<typeof vi.fn> };
+  let guard: ApiKeyGuard;
 
-  afterEach(() => {
-    process.env = { ...originalEnvironment };
+  beforeEach(() => {
+    sites = {
+      // Only 'secret-key' belongs to an active site, and that site is deliva.
+      findActiveByApiKey: vi.fn((key: string) =>
+        Promise.resolve(key === 'secret-key' ? { id: 'deliva' } : null),
+      ),
+    };
+    guard = new ApiKeyGuard(sites as unknown as SitesService);
   });
 
-  function context(siteId: string, apiKey?: string): ExecutionContext {
+  function context(siteId: unknown, apiKey?: unknown): ExecutionContext {
     return {
       switchToHttp: () => ({
         getRequest: () => ({
           body: { siteId },
-          headers: apiKey ? { 'x-api-key': apiKey } : {},
+          headers: apiKey === undefined ? {} : { 'x-api-key': apiKey },
         }),
       }),
     } as ExecutionContext;
   }
 
-  it('allows a request with the configured site API key', () => {
-    process.env.SITE_DELIVA_APIKEY = 'secret-key';
-    process.env.SITE_DELIVA_RECIPIENT = 'inbox@example.com';
-
-    expect(new ApiKeyGuard().canActivate(context('deliva', 'secret-key'))).toBe(
-      true,
-    );
+  it('allows a request whose key belongs to the site in the body', async () => {
+    await expect(
+      guard.canActivate(context('deliva', 'secret-key')),
+    ).resolves.toBe(true);
+    expect(sites.findActiveByApiKey).toHaveBeenCalledWith('secret-key');
   });
 
   it.each([
-    ['an unknown site', 'unknown', 'secret-key'],
+    ['a valid key used for another site', 'voltic', 'secret-key'],
+    ['an unknown or inactive site key', 'deliva', 'wrong-key'],
     ['a missing key', 'deliva', undefined],
-    ['an incorrect key', 'deliva', 'wrong-key'],
-  ])('rejects %s', (_case, siteId, apiKey) => {
-    process.env.SITE_DELIVA_APIKEY = 'secret-key';
-    process.env.SITE_DELIVA_RECIPIENT = 'inbox@example.com';
-
-    expect(() =>
-      new ApiKeyGuard().canActivate(context(siteId, apiKey)),
-    ).toThrow(UnauthorizedException);
+    ['an empty key', 'deliva', ''],
+    ['a repeated header (array)', 'deliva', ['secret-key', 'secret-key']],
+    ['a missing siteId', undefined, 'secret-key'],
+    ['a non-string siteId', ['deliva'], 'secret-key'],
+  ])('rejects %s', async (_case, siteId, apiKey) => {
+    await expect(guard.canActivate(context(siteId, apiKey))).rejects.toThrow(
+      UnauthorizedException,
+    );
   });
 });

@@ -5,9 +5,28 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { isEmail } from 'class-validator';
-import { QueryFailedError, Repository } from 'typeorm';
+import { In, QueryFailedError, Repository } from 'typeorm';
+import type { AuthUser } from '../auth/auth-user.js';
 import { SITE_ID_PATTERN, Site } from './entities/site.entity.js';
 import { SecretBox, generateApiKey, hashApiKey } from './site-secrets.js';
+
+export interface SiteSmtpSettings {
+  host: string;
+  port: number;
+  secure: boolean;
+  user: string | null;
+  pass: string | null;
+}
+
+export interface SiteMailSettings {
+  siteId: string;
+  name: string;
+  recipient: string;
+  // null: send through the global SMTP_* transport.
+  smtp: SiteSmtpSettings | null;
+  // From address override; null falls back to SMTP_FROM.
+  from: string | null;
+}
 
 export interface SiteSmtpInput {
   smtpHost?: string | null;
@@ -69,6 +88,70 @@ export class SitesService {
 
   list(): Promise<Site[]> {
     return this.repo.find({ order: { name: 'ASC' } });
+  }
+
+  // Includes inactive sites: their old requests stay visible in the dashboard.
+  async listIds(): Promise<string[]> {
+    const rows = await this.repo.find({
+      select: { id: true },
+      order: { id: 'ASC' },
+    });
+    return rows.map((row) => row.id);
+  }
+
+  // The sites a dashboard user may see. Super-admins see every site;
+  // everyone else sees the sites in users.siteIds.
+  async accessibleSiteIds(user: AuthUser): Promise<string[]> {
+    return user.role === 'super_admin' ? this.listIds() : user.siteIds;
+  }
+
+  // id -> display name, for the given ids. Ids with no site row are left
+  // out; callers fall back to showing the id itself.
+  async namesById(ids: string[]): Promise<Map<string, string>> {
+    const unique = [...new Set(ids)];
+    if (unique.length === 0) return new Map();
+    const rows = await this.repo.find({
+      select: { id: true, name: true },
+      where: { id: In(unique) },
+    });
+    return new Map(rows.map((row) => [row.id, row.name]));
+  }
+
+  // Which of the given ids exist as sites (used to validate users.siteIds).
+  async existingIds(ids: string[]): Promise<string[]> {
+    const names = await this.namesById(ids);
+    return [...names.keys()];
+  }
+
+  // Everything MailProcessor needs to deliver one site's email. This is the
+  // only place the SMTP password is decrypted. Returns null for a missing
+  // or inactive site.
+  async getMailSettings(id: string): Promise<SiteMailSettings | null> {
+    const site = await this.repo
+      .createQueryBuilder('site')
+      .addSelect('site.smtpPassEncrypted')
+      .where('site.id = :id', { id })
+      .andWhere('site.isActive = true')
+      .getOne();
+    if (!site) return null;
+
+    return {
+      siteId: site.id,
+      name: site.name,
+      recipient: site.recipient,
+      smtp: site.smtpHost
+        ? {
+            host: site.smtpHost,
+            port: site.smtpPort ?? (site.smtpSecure ? 465 : 587),
+            secure: site.smtpSecure,
+            user: site.smtpUser,
+            pass: site.smtpPassEncrypted
+              ? this.secrets.decrypt(site.smtpPassEncrypted)
+              : null,
+          }
+        : null,
+      from: site.smtpFrom,
+    };
   }
 
   async create(input: CreateSiteInput): Promise<CreatedSite> {
@@ -148,6 +231,13 @@ export class SitesService {
     }
     if (smtpPass && !smtpUser) {
       throw new BadRequestException('SMTP password needs an SMTP user');
+    }
+    // A company's own mail server will usually refuse (or SPF will fail) a
+    // From address on another domain, so don't fall back to SMTP_FROM here.
+    if (smtpHost && !smtpFrom) {
+      throw new BadRequestException(
+        'SMTP From address is required when an SMTP host is set',
+      );
     }
 
     return {

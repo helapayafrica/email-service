@@ -4,9 +4,9 @@ import type { Repository } from 'typeorm';
 import { ContactService } from './contact.service.js';
 import { CreateContactDto } from './dto/create-contact.dto.js';
 import type { ContactRequest } from './entities/contact-request.entity.js';
+import type { SitesService } from '../sites/sites.service.js';
 
 describe('ContactService', () => {
-  const originalEnvironment = { ...process.env };
   const dto: CreateContactDto = {
     siteId: 'deliva',
     fullName: 'Jane Doe',
@@ -24,12 +24,10 @@ describe('ContactService', () => {
     update: ReturnType<typeof vi.fn>;
   };
   let queue: { add: ReturnType<typeof vi.fn> };
+  let sites: { findById: ReturnType<typeof vi.fn> };
   let service: ContactService;
 
   beforeEach(() => {
-    process.env.SITE_DELIVA_APIKEY = 'secret-key';
-    process.env.SITE_DELIVA_RECIPIENT = 'contact@deliva.example';
-    process.env.SITE_DELIVA_NAME = 'Deliva Fasta';
     repo = {
       findOne: vi.fn(),
       create: vi.fn((record) => ({ id: 'contact-1', ...record })),
@@ -37,14 +35,23 @@ describe('ContactService', () => {
       update: vi.fn(),
     };
     queue = { add: vi.fn() };
+    sites = {
+      findById: vi.fn((id: string) =>
+        Promise.resolve(
+          id === 'deliva'
+            ? { id: 'deliva', name: 'Deliva Fasta', isActive: true }
+            : null,
+        ),
+      ),
+    };
     service = new ContactService(
       repo as unknown as Repository<ContactRequest>,
       queue as unknown as Queue,
+      sites as unknown as SitesService,
     );
   });
 
   afterEach(() => {
-    process.env = { ...originalEnvironment };
     vi.restoreAllMocks();
   });
 
@@ -91,13 +98,14 @@ describe('ContactService', () => {
       }),
     );
     expect(repo.save).toHaveBeenCalledOnce();
+    // Recipient and SMTP settings are loaded by MailProcessor, not queued.
+    expect(queue.add.mock.calls[0][1]).not.toHaveProperty('to');
     expect(queue.add).toHaveBeenCalledWith(
       'send-contact-email',
       expect.objectContaining({
         contactId: 'contact-1',
         receivedAt: expect.any(String),
         sourceName: 'Deliva Fasta',
-        to: 'contact@deliva.example',
         siteId: 'deliva',
       }),
       expect.objectContaining({
@@ -130,6 +138,16 @@ describe('ContactService', () => {
     await expect(
       service.handleContact(unknownSiteDto, 'unique-key'),
     ).rejects.toThrow('Unknown or unconfigured site');
+    expect(repo.save).not.toHaveBeenCalled();
+  });
+
+  it('rejects a deactivated site', async () => {
+    repo.findOne.mockResolvedValue(null);
+    sites.findById.mockResolvedValue({ id: 'deliva', isActive: false });
+
+    await expect(service.handleContact(dto, 'unique-key')).rejects.toThrow(
+      'Unknown or unconfigured site',
+    );
     expect(repo.save).not.toHaveBeenCalled();
   });
 });
