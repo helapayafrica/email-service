@@ -85,8 +85,9 @@ Then:
   have to re-enter every site's SMTP password and issue new API keys to every
   website. A database backup is useless without this key.
 - **Keep every `SITE_DELIVA_*`, `SITE_ALUMNI_*` and `SITE_VOLTIC_*` line.** The
-  import in step 5 reads them, and rollback needs them. They're removed in a
-  later release.
+  new version doesn't read them, but the import in step 5 reads them from this
+  file, and a rollback to the old version needs them. Remove them once the
+  release has proven itself (step 8).
 - Make sure each site's `_APIKEY` and `_RECIPIENT` are filled in. A site with
   either one empty is skipped by the import.
 
@@ -119,10 +120,13 @@ websites are still served by the old version.
 
 ## 5. Run the migrations and import the sites
 
-This starts a one-off container from the **new** image, next to the old one:
+This starts a one-off container from the **new** image, next to the old one. The
+`SITE_*` lines are no longer passed to the app, so `.env.production` is
+mounted read-only for the import to read them from:
 
 ```bash
-dcp run --rm --no-deps app sh -c "npm run migration:run:prod && npm run site:import-env:prod"
+dcp run --rm --no-deps -v "$PWD/.env.production:/run/site-import.env:ro" app \
+  sh -c "npm run migration:run:prod && npm run site:import-env:prod -- --from-file /run/site-import.env"
 ```
 
 Expected output (order may vary):
@@ -248,6 +252,10 @@ away: the old key stops working immediately.
 ## 8. Finish
 
 - Keep the backup from step 1 until the release has run cleanly for a few days.
+- Once you're sure you won't roll back, delete the `SITE_*` lines from
+  `.env.production`. Nothing in the new version reads them. From then on, sites
+  are managed only through `/admin/sites`, and rolling back to the old version
+  would need those lines restored first.
 - Record the deployed commit: `git rev-parse --short HEAD`.
 
 ## Rollback
@@ -286,8 +294,6 @@ dcp up -d --build
 
 These are planned in [`DASHBOARD_AUTH_PLAN.md`](DASHBOARD_AUTH_PLAN.md):
 
-- **Removing the `SITE_*` env vars.** Do this only after the release has run
-  cleanly, because rollback needs them.
 - **Dashboard frontend.** When it exists, add its origin to `CORS_ORIGINS`.
   The `Authorization` header is already allowed.
 - **Maintenance:** `dotenv` is used by the CLIs and the migration data source
