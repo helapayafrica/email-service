@@ -2,9 +2,19 @@ import {
   Column,
   CreateDateColumn,
   Entity,
+  Index,
   PrimaryGeneratedColumn,
 } from 'typeorm';
 
+export const CONTACT_REQUEST_STATUSES = [
+  'pending',
+  'queued',
+  'sent',
+  'failed',
+] as const;
+export type ContactRequestStatus = (typeof CONTACT_REQUEST_STATUSES)[number];
+
+@Index('IDX_contact_requests_siteId_createdAt', ['siteId', 'createdAt'])
 @Entity('contact_requests')
 export class ContactRequest {
   @PrimaryGeneratedColumn('uuid')
@@ -35,7 +45,7 @@ export class ContactRequest {
   message: string;
 
   @Column({ default: 'pending' })
-  status: 'pending' | 'queued' | 'sent' | 'failed';
+  status: ContactRequestStatus;
 
   @CreateDateColumn()
   createdAt: Date;

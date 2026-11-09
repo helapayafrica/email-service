@@ -1,6 +1,6 @@
 # Dashboard auth: plan and progress
 
-Last updated: 2026-11-06. Branch: `feature/dashboard-auth`.
+Last updated: 2026-11-09. Branch: `feature/dashboard-auth`.
 
 Use this file to pick the work up again after a break. Update the checklists
 as steps are finished.
@@ -55,20 +55,14 @@ branch is not pushed yet.
 
 ### Pending
 
-- [ ] **Step 4, item 7: `src/main.ts`.** Not done yet.
-  - Add `'Authorization'` to the CORS `allowedHeaders`.
-  - Add `.addBearerAuth({ type: 'http', scheme: 'bearer', bearerFormat: 'JWT' }, 'bearer')` to the OpenAPI builder. The name must match `@ApiBearerAuth('bearer')` in `auth.controller.ts`.
-- [ ] **Step 5: requests API.** Add `src/requests/` (module, controller, service, query DTO). The module imports `AuthModule` and `TypeOrmModule.forFeature([ContactRequest])`.
-  - `GET /requests` with query parameters:
-    - `siteId?`: optional. It must be in `accessibleSiteIds(user)`, otherwise respond `404`. If omitted, return all sites the user can access.
-    - `status?`: one of `queued`, `sent`, `failed`, `pending`.
-    - `page` (default 1) and `limit` (default 20, maximum 100).
-    - Optionally `q`, a case-insensitive search on name, email or subject.
-  - Response: `{ items, total, page, limit }`, ordered by `createdAt DESC`. Use `@Type(() => Number)` on the numeric query parameters.
-  - `GET /requests/:id`: use `ParseUUIDPipe`. Respond `404` if the request doesn't exist **or** its `siteId` isn't accessible to the user.
-  - Every query filters with `siteId IN (:...accessibleSiteIds)`. Never trust a site ID from the client without checking it with `canAccessSite`.
-  - New migration: add an index on `contact_requests ("siteId", "createdAt" DESC)`.
-  - Decide whether the `idempotencyKey` field is exposed. The recommendation is to leave it out of responses.
+- [x] **Step 4, item 7: `src/main.ts`.** CORS allows `Authorization`; OpenAPI registers the `bearer` scheme.
+- [x] **Step 5: requests API.** `src/requests/` (module, controller, service, `dto/list-requests.query.ts`).
+  - `GET /requests?siteId&status&q&page&limit` returns `{ items, total, page, limit }`, newest first (ties broken by `id`). `siteId` can only narrow the user's accessible sites; any other value returns `404`. `q` is trimmed and searches name, email and subject with `ILIKE`, with `%` and `_` escaped so they match literally.
+  - `GET /requests/:id` (`ParseUUIDPipe`) returns `404` for a missing row and for another tenant's row alike, because the site filter is part of the lookup.
+  - Responses add `siteName` and leave out `idempotencyKey`.
+  - Statuses now live in `CONTACT_REQUEST_STATUSES` / `ContactRequestStatus` in the entity.
+  - Migration `1794200000000-ContactRequestsSiteIndex`: `("siteId", "createdAt")` ascending, not DESC as first planned. `@Index` can't express DESC, so a DESC index would make `migration:generate` try to change it, and Postgres scans the btree backwards for `ORDER BY ... DESC` anyway. The index is declared on the entity too.
+  - Verified against a local stack: company-user vs super-admin scoping, filters, paging, 400/401/404 cases, CORS preflight, OpenAPI.
 - [ ] **Step 6: configuration and docs.**
   - Production `.env.production`: generate a fresh `JWT_SECRET` with `openssl rand -base64 48`.
   - Add the dashboard's origin to `CORS_ORIGINS`.

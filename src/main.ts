@@ -46,7 +46,12 @@ async function bootstrap() {
         ? allowedOrigins
         : process.env.NODE_ENV !== 'production',
     methods: ['GET', 'POST', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'X-API-Key', 'Idempotency-Key'],
+    allowedHeaders: [
+      'Content-Type',
+      'X-API-Key',
+      'Idempotency-Key',
+      'Authorization',
+    ],
   });
 
   const openApiConfig = new DocumentBuilder()
@@ -56,6 +61,14 @@ async function bootstrap() {
     .addApiKey(
       { type: 'apiKey', in: 'header', name: 'x-api-key' },
       'site-api-key',
+    )
+    .addBearerAuth(
+      {
+        type: 'http',
+        scheme: 'bearer',
+        bearerFormat: 'JWT',
+      },
+      'bearer',
     )
     .build();
   const document = SwaggerModule.createDocument(app, openApiConfig);
