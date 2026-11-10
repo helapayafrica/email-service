@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { QueryFailedError, Repository } from 'typeorm';
@@ -18,6 +19,44 @@ export interface CreateUserInput {
   password: string;
   role: UserRole;
   siteIds: string[];
+}
+
+export interface UpdateUserInput {
+  fullName?: string;
+  role?: UserRole;
+  siteIds?: string[];
+  isActive?: boolean;
+}
+
+// The account as the user who acts on it (no hash; select: false keeps it
+// out of every query except login).
+export interface ActingUser {
+  id: string;
+}
+
+function validFullName(value: string): string {
+  const fullName = value.trim();
+  if (!fullName || fullName.length > 150) {
+    throw new BadRequestException('Full name is required (max 150 characters)');
+  }
+  return fullName;
+}
+
+function validRole(role: UserRole): UserRole {
+  if (!USER_ROLES.includes(role)) {
+    throw new BadRequestException(
+      `Role must be one of: ${USER_ROLES.join(', ')}`,
+    );
+  }
+  return role;
+}
+
+function checkPassword(password: string): void {
+  if (password.length < MIN_PASSWORD_LENGTH) {
+    throw new BadRequestException(
+      `Password must be at least ${MIN_PASSWORD_LENGTH} characters`,
+    );
+  }
 }
 
 export function normalizeEmail(email: string): string {
@@ -53,42 +92,21 @@ export class UserService {
 
   async create(input: CreateUserInput): Promise<User> {
     const email = normalizeEmail(input.email);
-    const fullName = input.fullName.trim();
-    const siteIds = [...new Set(input.siteIds)]; // drop duplicates
-
     if (!isEmail(email)) {
       throw new BadRequestException('Invalid email address');
     }
-    if (!fullName) {
-      throw new BadRequestException('Full name is required');
-    }
-    if (!USER_ROLES.includes(input.role)) {
-      throw new BadRequestException(
-        `Role must be one of: ${USER_ROLES.join(', ')}`,
-      );
-    }
-    if (input.role === 'company_user' && siteIds.length === 0) {
-      throw new BadRequestException('A company user needs at least one site');
-    }
-    const existing = new Set(await this.sites.existingIds(siteIds));
-    const unknown = siteIds.filter((siteId) => !existing.has(siteId));
-    if (unknown.length > 0) {
-      throw new BadRequestException(`Unknown site(s): ${unknown.join(', ')}`);
-    }
-    if (input.password.length < MIN_PASSWORD_LENGTH) {
-      throw new BadRequestException(
-        `Password must be at least ${MIN_PASSWORD_LENGTH} characters`,
-      );
-    }
+    const fullName = validFullName(input.fullName);
+    const role = validRole(input.role);
+    const siteIds = await this.validSiteIds(role, input.siteIds);
+    checkPassword(input.password);
 
     try {
       const saved = await this.repo.save(
         this.repo.create({
           email,
           fullName,
-          role: input.role,
-          // Super-admins see everything, so their list stays empty.
-          siteIds: input.role === 'super_admin' ? [] : siteIds,
+          role,
+          siteIds,
           passwordHash: await hashPassword(input.password),
         }),
       );
@@ -106,5 +124,81 @@ export class UserService {
       }
       throw error;
     }
+  }
+
+  list(): Promise<User[]> {
+    return this.repo.find({ order: { email: 'ASC' } });
+  }
+
+  async getOrThrow(id: string): Promise<User> {
+    const user = await this.findById(id);
+    if (!user) throw new NotFoundException('User not found');
+    return user;
+  }
+
+  // Changes take effect on the user's next request: JwtAuthGuard reloads the
+  // user every time. The merged result is validated, so e.g. turning a
+  // super-admin into a company user requires giving them sites.
+  async update(
+    actor: ActingUser,
+    id: string,
+    input: UpdateUserInput,
+  ): Promise<User> {
+    const user = await this.getOrThrow(id);
+
+    // No lock-out: you can't take away your own access. Another
+    // super-admin has to do that.
+    if (actor.id === id) {
+      if (input.isActive === false) {
+        throw new BadRequestException("You can't deactivate your own account");
+      }
+      if (input.role !== undefined && input.role !== user.role) {
+        throw new BadRequestException("You can't change your own role");
+      }
+    }
+
+    const role = input.role !== undefined ? validRole(input.role) : user.role;
+    const changes: Partial<User> = {
+      role,
+      siteIds: await this.validSiteIds(role, input.siteIds ?? user.siteIds),
+    };
+    if (input.fullName !== undefined) {
+      changes.fullName = validFullName(input.fullName);
+    }
+    if (input.isActive !== undefined) changes.isActive = input.isActive;
+
+    await this.repo.update({ id }, changes);
+    return this.getOrThrow(id);
+  }
+
+  // A reset doesn't end sessions already open: their tokens stay valid until
+  // they expire (JWT_EXPIRES_IN_SECONDS). To lock someone out at once,
+  // deactivate them first.
+  async setPassword(id: string, password: string): Promise<void> {
+    checkPassword(password);
+    const result = await this.repo.update(
+      { id },
+      { passwordHash: await hashPassword(password) },
+    );
+    if (!result.affected) throw new NotFoundException('User not found');
+  }
+
+  // De-duplicates and checks the sites exist. Super-admins see every site,
+  // so their list is always stored empty.
+  private async validSiteIds(
+    role: UserRole,
+    siteIds: string[],
+  ): Promise<string[]> {
+    if (role === 'super_admin') return [];
+    const unique = [...new Set(siteIds)];
+    if (unique.length === 0) {
+      throw new BadRequestException('A company user needs at least one site');
+    }
+    const existing = new Set(await this.sites.existingIds(unique));
+    const unknown = unique.filter((siteId) => !existing.has(siteId));
+    if (unknown.length > 0) {
+      throw new BadRequestException(`Unknown site(s): ${unknown.join(', ')}`);
+    }
+    return unique;
   }
 }
