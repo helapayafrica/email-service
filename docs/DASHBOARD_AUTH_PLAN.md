@@ -121,7 +121,7 @@ branch is not pushed yet.
     - Known limit: a password reset doesn't end sessions already open (tokens last `JWT_EXPIRES_IN_SECONDS`). To cut someone off at once: deactivate, reset, reactivate. Real revocation stays under "Later".
   - [x] 8d. Tests for 8a–8c, and docs (`PROJECT.md`, `README.md`, `DEPLOY_DASHBOARD_AUTH.md` migration list, `CLAUDE.md`).
     - Tests were written with each part (8a–8c, 162 → 211). Docs: `PROJECT.md` (concepts, flow, directories, users over the API, CC in managing sites, endpoint table, `delivery` example and how to read it, troubleshooting), `README.md` (features; walkthrough steps 5–7: delivery record, add a company user, set CC), `DEPLOY_DASHBOARD_AUTH.md` (migrations, API row, company users over the API, delivery check, known limits), `CLAUDE.md` (overview, delivery bookkeeping, CC in mail settings, CORS `PUT`, user-admin rules).
-- [ ] **Merge** `feature/dashboard-auth` into `main` and push. Deploy with [`DEPLOY_DASHBOARD_AUTH.md`](DEPLOY_DASHBOARD_AUTH.md): new secrets, then migrations **and** `site:import-env:prod` from the new image before switching containers (otherwise every website gets `401`).
+- [x] **Merge** `feature/dashboard-auth` into `main` and push: done 2026-11-10 (fast-forward to `7ab5336`). **Deploy still pending**: follow [`DEPLOY_DASHBOARD_AUTH.md`](DEPLOY_DASHBOARD_AUTH.md) (new secrets, then migrations **and** `site:import-env:prod` from the new image before switching containers, otherwise every website gets `401`).
 
 ### Later or optional
 

@@ -157,8 +157,18 @@ curl -s -X PUT http://localhost:3000/sites/deliva/cc \
   -d '{"cc":["sales@example.com"]}' | jq
 ```
 
-Everything above can also be done in the browser at `/docs`: log in with
-`POST /auth/login`, then paste the `accessToken` under *Authentication*.
+Everything above can also be done in the browser at `/docs`. Send
+`POST /auth/login` once: the page keeps the token for that browser tab and adds
+it to your later requests, so there is nothing to copy. A token typed under
+*Authentication* still takes priority.
+
+To have the login example prefilled, set your local super-admin in `.env`
+(development only; ignored when `NODE_ENV=production`) and restart the stack:
+
+```env
+DOCS_LOGIN_EMAIL=admin@example.com
+DOCS_LOGIN_PASSWORD=<your local admin password>
+```
 
 ## Useful commands
 

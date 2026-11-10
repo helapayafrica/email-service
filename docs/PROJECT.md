@@ -185,8 +185,13 @@ can be imported once, keeping their keys:
 ## API
 
 The full, interactive reference is at `/docs`. Dashboard and admin endpoints
-take `Authorization: Bearer <accessToken>`. In Scalar, log in with
-`POST /auth/login` and paste the token under *Authentication*.
+take `Authorization: Bearer <accessToken>`. In `/docs`, send `POST /auth/login`
+once: the page keeps the token for that browser tab and adds it to later
+requests to this API (never to other hosts), unless a token is set under
+*Authentication*. It forgets the token when the API answers `401`. In
+development, `DOCS_LOGIN_EMAIL` and `DOCS_LOGIN_PASSWORD` prefill the login
+example; they are ignored when `NODE_ENV=production`. Both live in
+`src/docs/api-docs.ts`.
 
 | Endpoint                           | Who             | Purpose                                                   |
 | ---------------------------------- | --------------- | --------------------------------------------------------- |

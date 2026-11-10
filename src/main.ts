@@ -1,10 +1,9 @@
 import { NestFactory } from '@nestjs/core';
 import { Logger, ValidationPipe } from '@nestjs/common';
-import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
-import { apiReference } from '@scalar/nestjs-api-reference';
 import helmet from 'helmet';
 import { AppModule } from './app.module.js';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter.js';
+import { setupApiDocs } from './docs/api-docs.js';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -54,25 +53,7 @@ async function bootstrap() {
     ],
   });
 
-  const openApiConfig = new DocumentBuilder()
-    .setTitle('NVO Email Service')
-    .setDescription('Multi-site contact form delivery API')
-    .setVersion('1.0.0')
-    .addApiKey(
-      { type: 'apiKey', in: 'header', name: 'x-api-key' },
-      'site-api-key',
-    )
-    .addBearerAuth(
-      {
-        type: 'http',
-        scheme: 'bearer',
-        bearerFormat: 'JWT',
-      },
-      'bearer',
-    )
-    .build();
-  const document = SwaggerModule.createDocument(app, openApiConfig);
-  app.use('/docs', apiReference({ content: document, theme: 'purple' }));
+  setupApiDocs(app);
 
   const port = process.env.PORT ?? 3000;
   await app.listen(port);
