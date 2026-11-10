@@ -28,6 +28,7 @@ describe('MailProcessor', () => {
   let contactService: {
     markSent: ReturnType<typeof vi.fn>;
     markFailed: ReturnType<typeof vi.fn>;
+    isCancelled: ReturnType<typeof vi.fn>;
   };
   let sites: { getMailSettings: ReturnType<typeof vi.fn> };
   let processor: MailProcessor;
@@ -54,6 +55,7 @@ describe('MailProcessor', () => {
     contactService = {
       markSent: vi.fn().mockResolvedValue(undefined),
       markFailed: vi.fn().mockResolvedValue(undefined),
+      isCancelled: vi.fn().mockResolvedValue(false),
     };
     sites = { getMailSettings: vi.fn().mockResolvedValue(ownSmtp) };
     processor = new MailProcessor(
@@ -94,6 +96,16 @@ describe('MailProcessor', () => {
       cc: ['sales@deliva.example', 'boss@deliva.example'],
       attempts: 1,
     });
+    expect(contactService.markFailed).not.toHaveBeenCalled();
+  });
+
+  it('skips sending, without retrying, when delivery was stopped from the dashboard', async () => {
+    contactService.isCancelled.mockResolvedValue(true);
+
+    await expect(processor.handleSendEmail(job)).resolves.toBeUndefined();
+
+    expect(mailService.send).not.toHaveBeenCalled();
+    expect(contactService.markSent).not.toHaveBeenCalled();
     expect(contactService.markFailed).not.toHaveBeenCalled();
   });
 

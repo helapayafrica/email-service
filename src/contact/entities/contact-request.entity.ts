@@ -11,6 +11,8 @@ export const CONTACT_REQUEST_STATUSES = [
   'queued',
   'sent',
   'failed',
+  // A dashboard user stopped delivery before it succeeded; no more attempts.
+  'cancelled',
 ] as const;
 export type ContactRequestStatus = (typeof CONTACT_REQUEST_STATUSES)[number];
 

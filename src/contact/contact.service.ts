@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, Not } from 'typeorm';
 import { InjectQueue } from '@nestjs/bull';
 import type { Queue } from 'bull';
 import {
@@ -145,8 +145,17 @@ export class ContactService {
     });
   }
 
+  // Skips a request whose delivery was stopped while this attempt was in
+  // flight, so the status stays 'cancelled'.
+  // True when a dashboard user stopped delivery; the processor then skips
+  // sending, which ends the job without further retries.
+  async isCancelled(id: string): Promise<boolean> {
+    const row = await this.repo.findOne({ where: { id }, select: { id: true, status: true } });
+    return row?.status === 'cancelled';
+  }
+
   markFailed(id: string, failure: { attempts: number; error: string }) {
-    return this.repo.update(id, {
+    return this.repo.update({ id, status: Not('cancelled') }, {
       status: 'failed',
       attempts: failure.attempts,
       lastAttemptAt: () => 'now()',

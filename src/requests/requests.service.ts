@@ -1,6 +1,6 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Brackets, In, Repository } from 'typeorm';
+import { Brackets, In, LessThan, Repository } from 'typeorm';
 import {
   ContactRequest,
   MAX_DELIVERY_ATTEMPTS,
@@ -32,6 +32,9 @@ export interface RequestView {
     attempts: number;
     maxAttempts: number;
     willRetry: boolean;
+    // Not delivered yet and more attempts may follow (queued, pending, or
+    // failed with attempts left), so POST /requests/:id/stop is allowed.
+    canStop: boolean;
     lastAttemptAt: Date | null;
     lastError: string | null;
   };
@@ -67,10 +70,19 @@ function toView(row: ContactRequest, names: Map<string, string>): RequestView {
         row.status === 'failed' &&
         row.attempts > 0 &&
         row.attempts < MAX_DELIVERY_ATTEMPTS,
+      canStop: canStop(row),
       lastAttemptAt: row.lastAttemptAt,
       lastError: row.lastError,
     },
   };
+}
+
+function canStop(row: Pick<ContactRequest, 'status' | 'attempts'>): boolean {
+  return (
+    row.status === 'pending' ||
+    row.status === 'queued' ||
+    (row.status === 'failed' && row.attempts < MAX_DELIVERY_ATTEMPTS)
+  );
 }
 
 // Makes % and _ in the user's search match literally instead of as wildcards.
@@ -137,6 +149,34 @@ export class RequestsService {
       page,
       limit,
     };
+  }
+
+  // Stops delivery of a request that hasn't been sent yet. The processor
+  // checks the status before each attempt, so a queued job or pending retry
+  // ends without sending. An attempt already in flight can still succeed;
+  // then the request shows as sent.
+  async stopDelivery(user: AuthUser, id: string): Promise<RequestView> {
+    const current = await this.findOne(user, id); // 404 outside the user's sites
+    if (!current.delivery.canStop) {
+      throw new ConflictException(
+        current.status === 'sent'
+          ? 'This email has already been sent'
+          : 'Delivery has already stopped',
+      );
+    }
+    // Conditional update: if the email was sent (or gave up) since the read
+    // above, nothing changes and the caller gets a 409 instead.
+    const result = await this.requests.update(
+      [
+        { id, status: In(['pending', 'queued']) },
+        { id, status: 'failed', attempts: LessThan(MAX_DELIVERY_ATTEMPTS) },
+      ],
+      { status: 'cancelled' },
+    );
+    if (!result.affected) {
+      throw new ConflictException('Delivery finished before it could be stopped');
+    }
+    return this.findOne(user, id);
   }
 
   async findOne(user: AuthUser, id: string): Promise<RequestView> {

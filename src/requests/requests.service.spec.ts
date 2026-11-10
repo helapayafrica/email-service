@@ -1,4 +1,4 @@
-import { NotFoundException } from '@nestjs/common';
+import { ConflictException, NotFoundException } from '@nestjs/common';
 import { Brackets, In, type Repository } from 'typeorm';
 import type { AuthUser } from '../auth/auth-user.js';
 import type { ContactRequest } from '../contact/entities/contact-request.entity.js';
@@ -48,6 +48,7 @@ describe('RequestsService', () => {
   let repo: {
     createQueryBuilder: ReturnType<typeof vi.fn>;
     findOne: ReturnType<typeof vi.fn>;
+    update: ReturnType<typeof vi.fn>;
   };
   let sites: {
     accessibleSiteIds: ReturnType<typeof vi.fn>;
@@ -71,6 +72,7 @@ describe('RequestsService', () => {
     repo = {
       createQueryBuilder: vi.fn(() => qb),
       findOne: vi.fn().mockResolvedValue(row()),
+      update: vi.fn().mockResolvedValue({ affected: 1 }),
     };
     sites = {
       // Same rule as SitesService: super-admins see every site.
@@ -238,6 +240,71 @@ describe('RequestsService', () => {
     });
   });
 
+  describe('stopDelivery', () => {
+    it.each([
+      ['queued', { status: 'queued', attempts: 0 }],
+      ['pending', { status: 'pending', attempts: 0 }],
+      ['failed with attempts left', { status: 'failed', attempts: 2 }],
+    ] as const)('stops a request that is %s', async (_label, state) => {
+      repo.findOne
+        .mockResolvedValueOnce(row({ ...state, sentAt: null, deliveredTo: null }))
+        .mockResolvedValueOnce(row({ ...state, status: 'cancelled', sentAt: null, deliveredTo: null }));
+
+      const view = await service.stopDelivery(companyUser, 'r1');
+
+      expect(repo.update).toHaveBeenCalledWith(
+        [
+          { id: 'r1', status: In(['pending', 'queued']) },
+          expect.objectContaining({ id: 'r1', status: 'failed' }),
+        ],
+        { status: 'cancelled' },
+      );
+      expect(view.status).toBe('cancelled');
+      expect(view.delivery.canStop).toBe(false);
+      expect(view.delivery.willRetry).toBe(false);
+    });
+
+    it('refuses a request that was already sent', async () => {
+      repo.findOne.mockResolvedValue(row());
+
+      await expect(service.stopDelivery(companyUser, 'r1')).rejects.toThrow(
+        new ConflictException('This email has already been sent'),
+      );
+      expect(repo.update).not.toHaveBeenCalled();
+    });
+
+    it('refuses a request that failed for good or was already stopped', async () => {
+      for (const state of [
+        { status: 'failed', attempts: 5 },
+        { status: 'cancelled', attempts: 1 },
+      ] as const) {
+        repo.findOne.mockResolvedValue(row(state));
+        await expect(service.stopDelivery(companyUser, 'r1')).rejects.toThrow(
+          new ConflictException('Delivery has already stopped'),
+        );
+      }
+      expect(repo.update).not.toHaveBeenCalled();
+    });
+
+    it('returns 409 when delivery finished between the read and the update', async () => {
+      repo.findOne.mockResolvedValue(row({ status: 'queued', attempts: 0 }));
+      repo.update.mockResolvedValue({ affected: 0 });
+
+      await expect(service.stopDelivery(companyUser, 'r1')).rejects.toBeInstanceOf(
+        ConflictException,
+      );
+    });
+
+    it("returns 404 for a request on another company's site", async () => {
+      repo.findOne.mockResolvedValue(null);
+
+      await expect(service.stopDelivery(companyUser, 'r1')).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+      expect(repo.update).not.toHaveBeenCalled();
+    });
+  });
+
   describe('delivery record', () => {
     const deliveryOf = async (overrides: Partial<ContactRequest>) => {
       repo.findOne.mockResolvedValue(row(overrides));
@@ -252,6 +319,7 @@ describe('RequestsService', () => {
         attempts: 1,
         maxAttempts: 5,
         willRetry: false,
+        canStop: false,
         lastAttemptAt: new Date('2026-11-09T10:00:05Z'),
         lastError: null,
       });

@@ -1,13 +1,18 @@
 import {
   Controller,
   Get,
+  HttpCode,
+  HttpStatus,
+  Logger,
   Param,
+  Post,
   ParseUUIDPipe,
   Query,
   UseGuards,
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
+  ApiConflictResponse,
   ApiNotFoundResponse,
   ApiOperation,
   ApiTags,
@@ -25,6 +30,8 @@ import { RequestsService } from './requests.service.js';
 @UseGuards(JwtAuthGuard)
 @Controller('requests')
 export class RequestsController {
+  private readonly logger = new Logger(RequestsController.name);
+
   constructor(private readonly requestsService: RequestsService) {}
 
   @Get()
@@ -47,5 +54,25 @@ export class RequestsController {
     @Param('id', ParseUUIDPipe) id: string,
   ) {
     return this.requestsService.findOne(user, id);
+  }
+
+  @Post(':id/stop')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Stop delivering a request that has not been sent yet',
+    description:
+      'For queued requests and failed ones that would be retried. No more attempts are made and the status becomes cancelled. An attempt already in progress may still succeed.',
+  })
+  @ApiNotFoundResponse({ description: 'No such request on your sites' })
+  @ApiConflictResponse({ description: 'Already sent, or delivery already stopped' })
+  async stop(
+    @CurrentUser() user: authUser.AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    const view = await this.requestsService.stopDelivery(user, id);
+    this.logger.warn(
+      `Contact email delivery stopped requestId=${id} siteId=${view.siteId} by userId=${user.id}`,
+    );
+    return view;
   }
 }

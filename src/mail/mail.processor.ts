@@ -196,6 +196,14 @@ export class MailProcessor {
       message,
     ].join('\n');
 
+    // Stopped from the dashboard: end the job quietly, so Bull doesn't retry.
+    if (await this.contactService.isCancelled(contactId)) {
+      this.logger.log(
+        `Contact email skipped, delivery stopped requestId=${contactId} jobId=${String(job.id)} siteId=${siteId} attempt=${attempt}/${maxAttempts}`,
+      );
+      return;
+    }
+
     try {
       // Loaded at send time, not stored in the job, so SMTP credentials never
       // sit in Redis and edited settings apply to retries too. Inside the try
