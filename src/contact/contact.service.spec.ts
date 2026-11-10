@@ -1,6 +1,6 @@
 import { BadRequestException, Logger } from '@nestjs/common';
 import type { Queue } from 'bull';
-import type { Repository } from 'typeorm';
+import { Not, type Repository } from 'typeorm';
 import { ContactService } from './contact.service.js';
 import { CreateContactDto } from './dto/create-contact.dto.js';
 import type { ContactRequest } from './entities/contact-request.entity.js';
@@ -124,7 +124,8 @@ describe('ContactService', () => {
     await service.handleContact(dto, 'queue-failure-key');
     await vi.waitFor(() => {
       expect(repo.update).toHaveBeenCalledWith(
-        'contact-1',
+        // Never overwrites a request whose delivery was stopped.
+        { id: 'contact-1', status: Not('cancelled') },
         expect.objectContaining({
           status: 'failed',
           attempts: 0,

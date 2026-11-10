@@ -618,9 +618,13 @@ describe('SitesService', () => {
           recipient: 'inbox@acme.test',
           cc: ['x@acme.test'],
           isActive: true,
+          // The sender and whether there is an own server, but no host,
+          // user or password.
+          from: 'Acme <no-reply@acme.test>',
+          hasOwnSmtp: true,
         },
       ]);
-      expect(JSON.stringify(list)).not.toMatch(/smtp|mailer|v1:/i);
+      expect(JSON.stringify(list)).not.toMatch(/smtp\.acme|mailer|v1:/i);
     });
 
     it('returns no companies for a user without sites, without querying', async () => {
