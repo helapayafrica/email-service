@@ -100,17 +100,24 @@ branch is not pushed yet.
   - `CLAUDE.md`: overview, user commands and required env, dashboard flow and tenant-scoping rule.
   - Found and fixed: `AppController` (the `GET /` health check every guide uses) was never registered in `AppModule`, on `main` too, so `GET /` returned `404`. Now registered.
   - Server-side, at deploy time (covered by `DEPLOY_DASHBOARD_AUTH.md`): fresh production `JWT_SECRET` and `SITE_SECRETS_KEY`. Add the dashboard's origin to `CORS_ORIGINS` once the frontend exists.
-- [ ] **Step 7: tests.** Unit tests, following the hand-rolled `vi.fn()` style of the existing specs:
-  - `UserService.create` validation: role, at least one site for a company user, unknown site, password length, duplicate email (`23505`).
-  - `AuthService.login`: success, wrong password, unknown email, inactive user.
-  - `JwtAuthGuard`: missing token, bad token, inactive or deleted user.
-  - ~~`SitesService`~~: done in step 5b G.
-  - The requests service scoping: a company user can't read another site's requests, and a super-admin can read every site's requests.
+- [x] **Step 7: tests** (110 → 154), hand-rolled mocks as in the existing specs:
+  - `users/user.service.spec.ts`: normalisation, argon2id hash that verifies, duplicate sites dropped, super-admin stored without sites, re-read user has no hash, every validation error, duplicate email `23505` → `409`.
+  - `auth/auth.service.spec.ts`: success payload and profile (unknown site falls back to its id), token holds only `{ sub, email }`, no hash in the response; wrong password, inactive user and unknown email all give the same `401` and no token; an unknown email still runs one password verification (timing).
+  - `auth/jwt-auth.guard.spec.ts` (real `JwtService`): valid token loads the user from the database, role/sites come from the database not the token, lowercase scheme; missing header, other scheme, malformed, wrong-secret and expired tokens; deleted and inactive users.
+  - `requests/requests.service.spec.ts`: company user scoped to their sites, super-admin to all, `siteId` narrows but anything outside is `404` with no query, empty-site users, status filter, `%`/`_` escaping, paging and ordering, site names, no `idempotencyKey`; `findOne` filters by `siteId IN (...)`, other tenant's row is `404`.
+  - Mutation-checked: trusting the client's `siteId`, dropping the tenant filter in `findOne`, letting inactive users through the guard or login, taking the role from the token, removing the timing protection, and storing sites for super-admins each fails a test.
+- [ ] **Step 8: requirements review (2026-11-10).** Checked against what the system must do: super-admin manages company keys and SMTP ✅; users and which companies they see ⚠️ CLI only, nothing can change a user afterwards; logged-in users see their companies' requests ✅; whether each email reached its company ⚠️ only `status`, no record of where it went or why it failed; CC ❌ new.
+  - Decisions: **CC = a standing list per company**; every new contact email for the company is CC'd to it. **Any logged-in user can edit CC for the companies they can see** (super-admins for all); they still can't touch SMTP or keys.
+  - [ ] 8a. Delivery tracking. Migration adds to `contact_requests`: `deliveredTo`, `ccTo text[]`, `sentAt`, `attempts`, `lastError` (truncated, single line). `MailProcessor` records them on success and on each failed attempt. `/requests` and `/requests/:id` return them, so the dashboard shows where each email went, when, and why it failed.
+  - [ ] 8b. Company CC list. Migration adds `sites.ccRecipients text[]` (max 10, valid emails, lowercased, de-duplicated, not the main recipient). `MailProcessor` sends with `cc` and records it in `ccTo`. `GET /sites` (the user's companies with name, recipient and CC) and `PUT /sites/:id/cc` for logged-in users, scoped by `accessibleSiteIds` (`404` outside). Super-admin `SiteView` shows CC too. Audit-log every change with the user id. Note: whoever can edit CC can copy a company's future submissions to any address; that's inherent in the feature, hence the audit log.
+  - [ ] 8c. User management API for super-admins, replacing hand edits in `psql`: `GET /admin/users`, `POST /admin/users` (email, name, role, sites, initial password, same rules as `user:create`), `PATCH /admin/users/:id` (name, role, sites, `isActive`), `POST /admin/users/:id/password` (reset). A super-admin can't deactivate or demote themselves (no lock-out). Responses never include `passwordHash`. Changes apply on the user's next request, because `JwtAuthGuard` reloads the user.
+  - [ ] 8d. Tests for 8a–8c, and docs (`PROJECT.md`, `README.md`, `DEPLOY_DASHBOARD_AUTH.md` migration list, `CLAUDE.md`).
 - [ ] **Merge** `feature/dashboard-auth` into `main` and push. Deploy with [`DEPLOY_DASHBOARD_AUTH.md`](DEPLOY_DASHBOARD_AUTH.md): new secrets, then migrations **and** `site:import-env:prod` from the new image before switching containers (otherwise every website gets `401`).
 
 ### Later or optional
 
-- [ ] User management CLI: add or remove sites for an existing user, deactivate a user, reset a password. For now this has to be done by editing the database with `psql`.
+- [ ] ~~User management CLI~~: replaced by the `/admin/users` API in step 8c.
+- [ ] Users changing their own password (`PATCH /auth/me/password`).
 - [ ] Hide the password as it's typed in the `create-user` prompt (it currently echoes).
 - [ ] Logout or token revocation. For now, tokens expire after `JWT_EXPIRES_IN_SECONDS`, and setting `isActive = false` locks a user out immediately.
 - [ ] Frontend dashboard: login page, a company switcher based on `sites` from `/auth/me`, and a paginated requests table with a detail view.
