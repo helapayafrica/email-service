@@ -33,6 +33,12 @@ function row(overrides: Partial<ContactRequest> = {}): ContactRequest {
     message: 'Message body',
     status: 'sent',
     createdAt: new Date('2026-11-09T10:00:00Z'),
+    deliveredTo: 'inbox@deliva.test',
+    ccTo: ['boss@deliva.test'],
+    sentAt: new Date('2026-11-09T10:00:05Z'),
+    attempts: 1,
+    lastAttemptAt: new Date('2026-11-09T10:00:05Z'),
+    lastError: null,
     ...overrides,
   };
 }
@@ -229,6 +235,45 @@ describe('RequestsService', () => {
 
       expect(view).toMatchObject({ id: 'r1', siteName: 'Deliva Fasta' });
       expect(view).not.toHaveProperty('idempotencyKey');
+    });
+  });
+
+  describe('delivery record', () => {
+    const deliveryOf = async (overrides: Partial<ContactRequest>) => {
+      repo.findOne.mockResolvedValue(row(overrides));
+      return (await service.findOne(companyUser, 'r1')).delivery;
+    };
+
+    it('shows where and when a sent email was delivered', async () => {
+      await expect(deliveryOf({})).resolves.toEqual({
+        deliveredTo: 'inbox@deliva.test',
+        cc: ['boss@deliva.test'],
+        sentAt: new Date('2026-11-09T10:00:05Z'),
+        attempts: 1,
+        maxAttempts: 5,
+        willRetry: false,
+        lastAttemptAt: new Date('2026-11-09T10:00:05Z'),
+        lastError: null,
+      });
+    });
+
+    it.each([
+      ['a failure that is still being retried', 2, true],
+      ['a failure after the last attempt', 5, false],
+      ['a request that could not be queued', 0, false],
+    ])('reports willRetry for %s', async (_case, attempts, willRetry) => {
+      const delivery = await deliveryOf({
+        status: 'failed',
+        attempts,
+        deliveredTo: null,
+        sentAt: null,
+        lastError: 'EAUTH (535): Invalid login',
+      });
+
+      expect(delivery).toMatchObject({
+        willRetry,
+        lastError: 'EAUTH (535): Invalid login',
+      });
     });
   });
 });

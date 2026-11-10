@@ -25,7 +25,10 @@ describe('MailProcessor', () => {
   } as Job;
 
   let mailService: { send: ReturnType<typeof vi.fn> };
-  let contactService: { updateStatus: ReturnType<typeof vi.fn> };
+  let contactService: {
+    markSent: ReturnType<typeof vi.fn>;
+    markFailed: ReturnType<typeof vi.fn>;
+  };
   let sites: { getMailSettings: ReturnType<typeof vi.fn> };
   let processor: MailProcessor;
 
@@ -47,7 +50,10 @@ describe('MailProcessor', () => {
     vi.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
     vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
     mailService = { send: vi.fn().mockResolvedValue(undefined) };
-    contactService = { updateStatus: vi.fn().mockResolvedValue(undefined) };
+    contactService = {
+      markSent: vi.fn().mockResolvedValue(undefined),
+      markFailed: vi.fn().mockResolvedValue(undefined),
+    };
     sites = { getMailSettings: vi.fn().mockResolvedValue(ownSmtp) };
     processor = new MailProcessor(
       mailService as unknown as MailService,
@@ -80,9 +86,20 @@ describe('MailProcessor', () => {
     expect(text).toContain('Company site: Deliva Fasta');
     expect(text).not.toContain('Reference: contact-1');
     expect(replyTo).toBe('sender@example.com');
-    expect(contactService.updateStatus).toHaveBeenCalledWith(
+    expect(contactService.markSent).toHaveBeenCalledWith('contact-1', {
+      to: 'recipient@example.com',
+      cc: [],
+      attempts: 1,
+    });
+    expect(contactService.markFailed).not.toHaveBeenCalled();
+  });
+
+  it('records which attempt succeeded', async () => {
+    await processor.handleSendEmail({ ...job, attemptsMade: 3 } as Job);
+
+    expect(contactService.markSent).toHaveBeenCalledWith(
       'contact-1',
-      'sent',
+      expect.objectContaining({ attempts: 4 }),
     );
   });
 
@@ -91,10 +108,28 @@ describe('MailProcessor', () => {
     mailService.send.mockRejectedValue(deliveryError);
 
     await expect(processor.handleSendEmail(job)).rejects.toBe(deliveryError);
-    expect(contactService.updateStatus).toHaveBeenCalledWith(
-      'contact-1',
-      'failed',
+    expect(contactService.markFailed).toHaveBeenCalledWith('contact-1', {
+      attempts: 1,
+      error: 'SMTP unavailable',
+    });
+    expect(contactService.markSent).not.toHaveBeenCalled();
+  });
+
+  it('records the SMTP error code and response in lastError', async () => {
+    mailService.send.mockRejectedValue(
+      Object.assign(new Error('Invalid login: 535 5.7.8 bad\r\ncredentials'), {
+        code: 'EAUTH',
+        responseCode: 535,
+      }),
     );
+
+    await expect(
+      processor.handleSendEmail({ ...job, attemptsMade: 2 } as Job),
+    ).rejects.toThrow();
+    expect(contactService.markFailed).toHaveBeenCalledWith('contact-1', {
+      attempts: 3,
+      error: 'EAUTH (535): Invalid login: 535 5.7.8 bad credentials',
+    });
   });
 
   it('passes no SMTP override for a site that uses the global settings', async () => {
@@ -117,9 +152,9 @@ describe('MailProcessor', () => {
       'Site deliva does not exist or is inactive',
     );
     expect(mailService.send).not.toHaveBeenCalled();
-    expect(contactService.updateStatus).toHaveBeenCalledWith(
-      'contact-1',
-      'failed',
-    );
+    expect(contactService.markFailed).toHaveBeenCalledWith('contact-1', {
+      attempts: 1,
+      error: 'Site deliva does not exist or is inactive',
+    });
   });
 });

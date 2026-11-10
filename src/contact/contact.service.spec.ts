@@ -123,9 +123,14 @@ describe('ContactService', () => {
 
     await service.handleContact(dto, 'queue-failure-key');
     await vi.waitFor(() => {
-      expect(repo.update).toHaveBeenCalledWith('contact-1', {
-        status: 'failed',
-      });
+      expect(repo.update).toHaveBeenCalledWith(
+        'contact-1',
+        expect.objectContaining({
+          status: 'failed',
+          attempts: 0,
+          lastError: 'Could not be queued for delivery',
+        }),
+      );
     });
   });
 
@@ -149,5 +154,56 @@ describe('ContactService', () => {
       'Unknown or unconfigured site',
     );
     expect(repo.save).not.toHaveBeenCalled();
+  });
+
+  describe('delivery record', () => {
+    // The update values, with database-clock functions shown as their SQL.
+    const updateValues = () => {
+      const values = repo.update.mock.calls[0][1] as Record<string, unknown>;
+      return Object.fromEntries(
+        Object.entries(values).map(([key, value]) => [
+          key,
+          typeof value === 'function' ? `sql:${String(value())}` : value,
+        ]),
+      );
+    };
+
+    it('records where and when the email was delivered, and clears the error', async () => {
+      await service.markSent('contact-1', {
+        to: 'inbox@deliva.example',
+        cc: ['boss@deliva.example'],
+        attempts: 2,
+      });
+
+      expect(repo.update.mock.calls[0][0]).toBe('contact-1');
+      expect(updateValues()).toEqual({
+        status: 'sent',
+        deliveredTo: 'inbox@deliva.example',
+        ccTo: ['boss@deliva.example'],
+        attempts: 2,
+        sentAt: 'sql:now()',
+        lastAttemptAt: 'sql:now()',
+        lastError: null,
+      });
+    });
+
+    it('records a failed attempt with a single-line, length-limited error', async () => {
+      await service.markFailed('contact-1', {
+        attempts: 3,
+        error: `ECONNECTION:\n  connect refused ${'x'.repeat(600)}`,
+      });
+
+      const values = updateValues();
+      expect(values).toMatchObject({
+        status: 'failed',
+        attempts: 3,
+        lastAttemptAt: 'sql:now()',
+      });
+      expect(values.lastError).toMatch(/^ECONNECTION: connect refused x+$/);
+      expect(String(values.lastError)).toHaveLength(500);
+      // A failure never touches the delivery fields of an earlier success.
+      expect(values).not.toHaveProperty('sentAt');
+      expect(values).not.toHaveProperty('deliveredTo');
+    });
   });
 });

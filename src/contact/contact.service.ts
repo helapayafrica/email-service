@@ -3,7 +3,10 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { InjectQueue } from '@nestjs/bull';
 import type { Queue } from 'bull';
-import { ContactRequest } from './entities/contact-request.entity.js';
+import {
+  ContactRequest,
+  MAX_DELIVERY_ATTEMPTS,
+} from './entities/contact-request.entity.js';
 import { CreateContactDto } from './dto/create-contact.dto.js';
 import { SitesService } from '../sites/sites.service.js';
 
@@ -72,7 +75,10 @@ export class ContactService {
         `Unable to queue contact email ${record.id}; marking it failed`,
         stack,
       );
-      await this.updateStatus(record.id, 'failed');
+      await this.markFailed(record.id, {
+        attempts: 0,
+        error: 'Could not be queued for delivery',
+      });
     });
 
     return {
@@ -109,7 +115,7 @@ export class ContactService {
         siteId: dto.siteId,
       },
       {
-        attempts: 5,
+        attempts: MAX_DELIVERY_ATTEMPTS,
         // Initial attempt plus retries after 2, 4, 8, and 16 seconds.
         backoff: { type: 'exponential', delay: 2000 },
         removeOnComplete: true,
@@ -117,11 +123,35 @@ export class ContactService {
       },
     );
     this.logger.log(
-      `Contact email queued requestId=${contactId} jobId=${String(job.id)} siteId=${dto.siteId} attempts=5`,
+      `Contact email queued requestId=${contactId} jobId=${String(job.id)} siteId=${dto.siteId} attempts=${MAX_DELIVERY_ATTEMPTS}`,
     );
   }
 
-  updateStatus(id: string, status: ContactRequest['status']) {
-    return this.repo.update(id, { status });
+  // Delivery bookkeeping for MailProcessor. Times use the database clock
+  // (now()), the same one createdAt uses, so they line up whatever the app
+  // server's time zone.
+  markSent(
+    id: string,
+    delivery: { to: string; cc: string[]; attempts: number },
+  ) {
+    return this.repo.update(id, {
+      status: 'sent',
+      deliveredTo: delivery.to,
+      ccTo: delivery.cc,
+      attempts: delivery.attempts,
+      sentAt: () => 'now()',
+      lastAttemptAt: () => 'now()',
+      lastError: null,
+    });
+  }
+
+  markFailed(id: string, failure: { attempts: number; error: string }) {
+    return this.repo.update(id, {
+      status: 'failed',
+      attempts: failure.attempts,
+      lastAttemptAt: () => 'now()',
+      // One line, and short enough for the column.
+      lastError: failure.error.replace(/\s+/g, ' ').trim().slice(0, 500),
+    });
   }
 }

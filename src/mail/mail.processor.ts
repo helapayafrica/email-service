@@ -39,6 +39,20 @@ function formatReceivedAt(value: string): string {
   }).format(date)} UTC`;
 }
 
+// What the dashboard shows as lastError, e.g.
+// "EAUTH (535): Invalid login: 535 5.7.8 Authentication credentials invalid".
+function describeFailure(details: {
+  code: string;
+  responseCode: string;
+  message: string;
+}): string {
+  const code = details.code === 'unknown' ? '' : details.code;
+  const response =
+    details.responseCode === 'unknown' ? '' : ` (${details.responseCode})`;
+  const prefix = `${code}${response}`.trim();
+  return prefix ? `${prefix}: ${details.message}` : details.message;
+}
+
 @Processor('mail')
 export class MailProcessor {
   private readonly logger = new Logger(MailProcessor.name);
@@ -198,13 +212,20 @@ export class MailProcessor {
         from,
         { smtp: settings.smtp, from: settings.from },
       );
-      await this.contactService.updateStatus(contactId, 'sent');
+      await this.contactService.markSent(contactId, {
+        to: settings.recipient,
+        cc: [],
+        attempts: attempt,
+      });
       this.logger.log(
         `Contact email delivered requestId=${contactId} jobId=${String(job.id)} siteId=${siteId} attempt=${attempt}/${maxAttempts} messageId=${String(result?.messageId ?? 'unknown')} accepted=${result?.accepted?.length ?? 0} rejected=${result?.rejected?.length ?? 0}`,
       );
     } catch (error: unknown) {
-      await this.contactService.updateStatus(contactId, 'failed');
       const details = this.getErrorDetails(error);
+      await this.contactService.markFailed(contactId, {
+        attempts: attempt,
+        error: describeFailure(details),
+      });
       this.logger.error(
         `Contact email delivery failed requestId=${contactId} jobId=${String(job.id)} siteId=${siteId} attempt=${attempt}/${maxAttempts} willRetry=${attempt < maxAttempts} errorName=${details.name} errorCode=${details.code} command=${details.command} responseCode=${details.responseCode} message=${details.message}`,
         details.stack,

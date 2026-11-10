@@ -1,7 +1,10 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Brackets, In, Repository } from 'typeorm';
-import { ContactRequest } from '../contact/entities/contact-request.entity.js';
+import {
+  ContactRequest,
+  MAX_DELIVERY_ATTEMPTS,
+} from '../contact/entities/contact-request.entity.js';
 import { SitesService } from '../sites/sites.service.js';
 import type { AuthUser } from '../auth/auth-user.js';
 import type { ListRequestsQuery } from './dto/list-requests.query.js';
@@ -19,6 +22,19 @@ export interface RequestView {
   message: string;
   status: ContactRequest['status'];
   createdAt: Date;
+  // Where the email went and how delivery went. Empty for requests from
+  // before delivery tracking. status 'failed' with attempts below
+  // MAX_DELIVERY_ATTEMPTS means it will still be retried.
+  delivery: {
+    deliveredTo: string | null;
+    cc: string[];
+    sentAt: Date | null;
+    attempts: number;
+    maxAttempts: number;
+    willRetry: boolean;
+    lastAttemptAt: Date | null;
+    lastError: string | null;
+  };
 }
 
 export interface RequestPage {
@@ -41,6 +57,19 @@ function toView(row: ContactRequest, names: Map<string, string>): RequestView {
     message: row.message,
     status: row.status,
     createdAt: row.createdAt,
+    delivery: {
+      deliveredTo: row.deliveredTo,
+      cc: row.ccTo,
+      sentAt: row.sentAt,
+      attempts: row.attempts,
+      maxAttempts: MAX_DELIVERY_ATTEMPTS,
+      willRetry:
+        row.status === 'failed' &&
+        row.attempts > 0 &&
+        row.attempts < MAX_DELIVERY_ATTEMPTS,
+      lastAttemptAt: row.lastAttemptAt,
+      lastError: row.lastError,
+    },
   };
 }
 

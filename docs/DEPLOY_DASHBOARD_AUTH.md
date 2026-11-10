@@ -9,7 +9,7 @@ release. Follow it once, in order. Allow about 20 minutes.
 
 | Area | Change |
 |---|---|
-| Database | Four new migrations: `users` table, user roles and sites, an index on `contact_requests`, and the `sites` table. They are additive: existing tables and data are not changed. |
+| Database | New migrations: `users` table, user roles and sites, an index on `contact_requests`, the `sites` table, and delivery-record columns on `contact_requests`. They are additive: existing tables and data are not changed. |
 | Sites | Companies now live in the `sites` table instead of the `SITE_*` env vars. Each site's API key is stored as a hash plus an encrypted copy. A site can have its own SMTP server. |
 | Dashboard API | `POST /auth/login`, `GET /auth/me`, `GET /requests`, `GET /requests/:id`, and for super-admins `/admin/sites` (create, edit, deactivate, rotate and reveal keys), all using a bearer token. |
 | Configuration | Three new env vars: `JWT_SECRET`, `JWT_EXPIRES_IN_SECONDS`, `SITE_SECRETS_KEY`. Compose refuses to start without `JWT_SECRET` and `SITE_SECRETS_KEY`. |
@@ -136,6 +136,7 @@ Migration CreateUsers1794000000000 has been executed successfully.
 Migration UserRolesAndSites1794100000000 has been executed successfully.
 Migration ContactRequestsSiteIndex1794200000000 has been executed successfully.
 Migration CreateSites1794300000000 has been executed successfully.
+Migration ContactRequestDelivery1794400000000 has been executed successfully.
 import deliva: Deliva Fasta -> contact@...
 import alumni: Rongai Old Boys Alumni -> contact@...
 import voltic: Voltic Africa Limited -> contact@...
