@@ -3,6 +3,7 @@ import { Transform, Type } from 'class-transformer';
 import {
   IsIn,
   IsInt,
+  IsISO8601,
   IsOptional,
   IsString,
   Max,
@@ -42,6 +43,23 @@ export class ListRequestsQuery {
   @MinLength(1)
   @MaxLength(100)
   q?: string;
+
+  @ApiPropertyOptional({
+    example: '2026-11-03T00:00:00.000Z',
+    description:
+      'Received at or after this instant (ISO 8601). The dashboard sends the start of the chosen day in the user\'s time zone.',
+  })
+  @IsOptional()
+  @IsISO8601({ strict: true })
+  from?: string;
+
+  @ApiPropertyOptional({
+    example: '2026-11-10T00:00:00.000Z',
+    description: 'Received before this instant (ISO 8601, exclusive).',
+  })
+  @IsOptional()
+  @IsISO8601({ strict: true })
+  to?: string;
 
   @ApiPropertyOptional({ default: 1, minimum: 1 })
   @IsOptional()

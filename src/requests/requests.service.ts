@@ -1,4 +1,4 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Brackets, In, LessThan, Repository } from 'typeorm';
 import {
@@ -101,6 +101,12 @@ export class RequestsService {
   async list(user: AuthUser, query: ListRequestsQuery): Promise<RequestPage> {
     const { page, limit } = query;
 
+    const from = query.from ? new Date(query.from) : null;
+    const to = query.to ? new Date(query.to) : null;
+    if (from && to && from >= to) {
+      throw new BadRequestException('from must be before to');
+    }
+
     let siteIds = await this.sites.accessibleSiteIds(user);
     if (query.siteId !== undefined) {
       // 404 rather than 403: don't confirm that another company's site exists.
@@ -122,6 +128,9 @@ export class RequestsService {
     if (query.status) {
       qb.andWhere('r.status = :status', { status: query.status });
     }
+
+    if (from) qb.andWhere('r.createdAt >= :from', { from });
+    if (to) qb.andWhere('r.createdAt < :to', { to });
 
     if (query.q) {
       const pattern = `%${escapeLike(query.q)}%`;

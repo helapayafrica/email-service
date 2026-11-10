@@ -1,4 +1,4 @@
-import { ConflictException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { Brackets, In, type Repository } from 'typeorm';
 import type { AuthUser } from '../auth/auth-user.js';
 import type { ContactRequest } from '../contact/entities/contact-request.entity.js';
@@ -144,6 +144,29 @@ describe('RequestsService', () => {
       expect(qb.andWhere).toHaveBeenCalledWith('r.status = :status', {
         status: 'failed',
       });
+    });
+
+    it('filters by received date, from inclusive and to exclusive', async () => {
+      await service.list(companyUser, query({
+        from: '2026-11-03T00:00:00.000Z',
+        to: '2026-11-10T00:00:00.000Z',
+      }));
+
+      expect(qb.andWhere).toHaveBeenCalledWith('r.createdAt >= :from', {
+        from: new Date('2026-11-03T00:00:00.000Z'),
+      });
+      expect(qb.andWhere).toHaveBeenCalledWith('r.createdAt < :to', {
+        to: new Date('2026-11-10T00:00:00.000Z'),
+      });
+    });
+
+    it('rejects a date range that ends before it starts', async () => {
+      await expect(
+        service.list(companyUser, query({
+          from: '2026-11-10T00:00:00.000Z',
+          to: '2026-11-03T00:00:00.000Z',
+        })),
+      ).rejects.toBeInstanceOf(BadRequestException);
     });
 
     it('searches name, email and subject, matching % and _ literally', async () => {
