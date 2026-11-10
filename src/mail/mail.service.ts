@@ -9,6 +9,16 @@ export interface MailSender {
   from: string | null;
 }
 
+export interface MailMessage {
+  to: string;
+  cc?: string[];
+  subject: string;
+  html: string;
+  text: string;
+  replyTo?: string;
+  sender?: MailSender;
+}
+
 @Injectable()
 export class MailService implements OnModuleInit {
   private readonly logger = new Logger(MailService.name);
@@ -31,14 +41,8 @@ export class MailService implements OnModuleInit {
     );
   }
 
-  async send(
-    to: string,
-    subject: string,
-    html: string,
-    text: string,
-    replyTo?: string,
-    sender?: MailSender,
-  ) {
+  async send(message: MailMessage) {
+    const { sender } = message;
     // A non-pooled transport opens one connection per message anyway, so a
     // per-site transport is created per send instead of being cached; that
     // also means edited SMTP settings apply to the very next email.
@@ -55,11 +59,12 @@ export class MailService implements OnModuleInit {
 
     return transporter.sendMail({
       from: sender?.from ?? process.env.SMTP_FROM,
-      to,
-      subject,
-      html,
-      text,
-      replyTo,
+      to: message.to,
+      cc: message.cc?.length ? message.cc : undefined,
+      subject: message.subject,
+      html: message.html,
+      text: message.text,
+      replyTo: message.replyTo,
     });
   }
 }

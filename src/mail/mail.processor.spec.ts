@@ -2,7 +2,7 @@ import { Logger } from '@nestjs/common';
 import type { Job } from 'bull';
 import type { ContactService } from '../contact/contact.service.js';
 import { MailProcessor } from './mail.processor.js';
-import type { MailService } from './mail.service.js';
+import type { MailMessage, MailService } from './mail.service.js';
 import type { SiteMailSettings, SitesService } from '../sites/sites.service.js';
 
 describe('MailProcessor', () => {
@@ -44,6 +44,7 @@ describe('MailProcessor', () => {
       pass: 'decrypted-password',
     },
     from: 'Deliva <no-reply@deliva.example>',
+    cc: ['sales@deliva.example', 'boss@deliva.example'],
   };
 
   beforeEach(() => {
@@ -70,9 +71,11 @@ describe('MailProcessor', () => {
     await processor.handleSendEmail(job);
 
     expect(mailService.send).toHaveBeenCalledOnce();
-    const [to, , html, text, replyTo, sender] = mailService.send.mock.calls[0];
+    const { to, cc, html, text, replyTo, sender } = mailService.send.mock
+      .calls[0][0] as MailMessage;
     expect(sites.getMailSettings).toHaveBeenCalledWith('deliva');
     expect(to).toBe('recipient@example.com');
+    expect(cc).toEqual(['sales@deliva.example', 'boss@deliva.example']);
     expect(sender).toEqual({ smtp: ownSmtp.smtp, from: ownSmtp.from });
     expect(html).toContain('&lt;script&gt;Jane&lt;/script&gt;');
     expect(html).not.toContain('contact-1');
@@ -88,7 +91,7 @@ describe('MailProcessor', () => {
     expect(replyTo).toBe('sender@example.com');
     expect(contactService.markSent).toHaveBeenCalledWith('contact-1', {
       to: 'recipient@example.com',
-      cc: [],
+      cc: ['sales@deliva.example', 'boss@deliva.example'],
       attempts: 1,
     });
     expect(contactService.markFailed).not.toHaveBeenCalled();
@@ -141,7 +144,7 @@ describe('MailProcessor', () => {
 
     await processor.handleSendEmail(job);
 
-    const sender = mailService.send.mock.calls[0][5];
+    const { sender } = mailService.send.mock.calls[0][0] as MailMessage;
     expect(sender).toEqual({ smtp: null, from: null });
   });
 

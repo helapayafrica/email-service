@@ -27,6 +27,8 @@ export interface SiteMailSettings {
   smtp: SiteSmtpSettings | null;
   // From address override; null falls back to SMTP_FROM.
   from: string | null;
+  // CC'd on every contact email for the site.
+  cc: string[];
 }
 
 // SMTP fields as sent by a super-admin. For updates: a field left out
@@ -64,6 +66,7 @@ export interface SiteView {
   name: string;
   recipient: string;
   isActive: boolean;
+  cc: string[];
   // null: the global SMTP_FROM is used.
   from: string | null;
   // null: the global SMTP_* server is used.
@@ -83,6 +86,54 @@ export interface CreatedSite {
   // The plaintext key. Shown to the super-admin now; it is also stored
   // encrypted and can be revealed again later.
   apiKey: string;
+}
+
+// What any user who can see a site gets (GET /sites).
+export interface CompanySiteView {
+  id: string;
+  name: string;
+  recipient: string;
+  cc: string[];
+  isActive: boolean;
+}
+
+export const MAX_CC_RECIPIENTS = 10;
+
+function toCompanyView(site: Site): CompanySiteView {
+  return {
+    id: site.id,
+    name: site.name,
+    recipient: site.recipient,
+    cc: site.ccRecipients,
+    isActive: site.isActive,
+  };
+}
+
+// Trims, lowercases and de-duplicates, then validates the list as a whole.
+export function normalizeCc(cc: string[], recipient: string): string[] {
+  const list = [
+    ...new Set(cc.map((address) => address.trim().toLowerCase())),
+  ].filter(Boolean);
+
+  if (list.length > MAX_CC_RECIPIENTS) {
+    throw new BadRequestException(
+      `At most ${MAX_CC_RECIPIENTS} CC addresses are allowed`,
+    );
+  }
+  const invalid = list.filter(
+    (address) => !isEmail(address) || address.length > 254,
+  );
+  if (invalid.length > 0) {
+    throw new BadRequestException(
+      `Not valid email addresses: ${invalid.join(', ')}`,
+    );
+  }
+  if (list.includes(recipient.toLowerCase())) {
+    throw new BadRequestException(
+      'The main recipient already gets every email; remove it from CC',
+    );
+  }
+  return list;
 }
 
 // The SMTP columns as stored.
@@ -148,6 +199,7 @@ function toView(site: Site): SiteView {
     name: site.name,
     recipient: site.recipient,
     isActive: site.isActive,
+    cc: site.ccRecipients,
     from: site.smtpFrom,
     smtp: site.smtpHost
       ? {
@@ -247,6 +299,46 @@ export class SitesService {
           }
         : null,
       from: site.smtpFrom,
+      cc: site.ccRecipients,
+    };
+  }
+
+  // ---- Company settings (any user, for the sites they can see) -----------
+
+  // The sites a dashboard user can see, with the settings they may read.
+  // No SMTP details or keys: those are for super-admins.
+  async listForUser(user: AuthUser): Promise<CompanySiteView[]> {
+    const ids = await this.accessibleSiteIds(user);
+    if (ids.length === 0) return [];
+    const sites = await this.repo.find({
+      where: { id: In(ids) },
+      order: { name: 'ASC' },
+    });
+    return sites.map(toCompanyView);
+  }
+
+  // Replaces a site's CC list. 404 (not 403) for a site the user can't see,
+  // like the requests API.
+  async setCc(
+    user: AuthUser,
+    id: string,
+    cc: string[],
+  ): Promise<{ site: CompanySiteView; added: string[]; removed: string[] }> {
+    if (!(await this.accessibleSiteIds(user)).includes(id)) {
+      throw new NotFoundException('Site not found');
+    }
+    const site = await this.repo.findOne({ where: { id } });
+    if (!site) throw new NotFoundException('Site not found');
+
+    const previous = site.ccRecipients;
+    const next = normalizeCc(cc, site.recipient);
+    await this.repo.update({ id }, { ccRecipients: next });
+    site.ccRecipients = next;
+
+    return {
+      site: toCompanyView(site),
+      added: next.filter((address) => !previous.includes(address)),
+      removed: previous.filter((address) => !next.includes(address)),
     };
   }
 

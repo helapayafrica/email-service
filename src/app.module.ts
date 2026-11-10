@@ -10,6 +10,7 @@ import { dataSourceOptions } from './database/data-source.js';
 import { AuthModule } from './auth/auth.module.js';
 import { SitesModule } from './sites/sites.module.js';
 import { AdminModule } from './admin/admin.module.js';
+import { CompanyModule } from './company/company.module.js';
 import { AppController } from './app.controller.js';
 import { AppService } from './app.service.js';
 import { RequestsModule } from './requests/requests.module.js';
@@ -39,6 +40,7 @@ import { RequestsModule } from './requests/requests.module.js';
     RequestsModule,
     SitesModule,
     AdminModule,
+    CompanyModule,
   ],
   // GET / health check, used by the deployment guides' smoke tests.
   controllers: [AppController],

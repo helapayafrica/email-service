@@ -59,6 +59,11 @@ export class Site {
   @Column({ type: 'varchar', length: 320, nullable: true })
   smtpFrom: string | null;
 
+  // Every contact email for this site is also CC'd to these addresses.
+  // Editable by any user who can see the site (PUT /sites/:id/cc).
+  @Column({ type: 'text', array: true, default: () => "'{}'" })
+  ccRecipients: string[];
+
   // Deactivate instead of deleting, so users.siteIds and old contact requests
   // never point at a missing site. Inactive sites reject /contact.
   @Column({ type: 'boolean', default: true })

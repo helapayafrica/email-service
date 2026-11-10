@@ -4,7 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { randomBytes } from 'node:crypto';
-import { QueryFailedError, type Repository } from 'typeorm';
+import { In, QueryFailedError, type Repository } from 'typeorm';
 import type { AuthUser } from '../auth/auth-user.js';
 import type { Site } from './entities/site.entity.js';
 import { SecretBox, hashApiKey } from './site-secrets.js';
@@ -26,6 +26,7 @@ function site(overrides: Partial<Site> = {}): Site {
     smtpUser: null,
     smtpPassEncrypted: null,
     smtpFrom: null,
+    ccRecipients: [],
     isActive: true,
     createdAt: new Date('2026-11-01T00:00:00Z'),
     updatedAt: new Date('2026-11-01T00:00:00Z'),
@@ -360,6 +361,7 @@ describe('SitesService', () => {
         recipient: 'inbox@acme.test',
         smtp: null,
         from: null,
+        cc: [],
       });
     });
 
@@ -424,6 +426,127 @@ describe('SitesService', () => {
     it('skips the query for an empty id list', async () => {
       await expect(service.namesById([])).resolves.toEqual(new Map());
       expect(repo.find).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('CC list', () => {
+    const companyUser: AuthUser = {
+      id: 'u1',
+      email: 'u@acme.test',
+      fullName: 'U',
+      role: 'company_user',
+      siteIds: ['acme'],
+    };
+
+    beforeEach(() => {
+      repo.findOne.mockResolvedValue(
+        site({ ccRecipients: ['old@acme.test', 'keep@acme.test'] }),
+      );
+    });
+
+    it('replaces the list and reports what was added and removed', async () => {
+      const result = await service.setCc(companyUser, 'acme', [
+        ' Keep@Acme.test ',
+        'new@acme.test',
+        'new@acme.test',
+      ]);
+
+      expect(repo.update).toHaveBeenCalledWith(
+        { id: 'acme' },
+        { ccRecipients: ['keep@acme.test', 'new@acme.test'] },
+      );
+      expect(result.added).toEqual(['new@acme.test']);
+      expect(result.removed).toEqual(['old@acme.test']);
+      expect(result.site.cc).toEqual(['keep@acme.test', 'new@acme.test']);
+    });
+
+    it('clears the list with []', async () => {
+      await service.setCc(companyUser, 'acme', []);
+
+      expect(repo.update).toHaveBeenCalledWith(
+        { id: 'acme' },
+        { ccRecipients: [] },
+      );
+    });
+
+    it("returns 404 for a site the user can't see, without loading it", async () => {
+      await expect(
+        service.setCc(companyUser, 'deliva', ['a@b.test']),
+      ).rejects.toThrow(new NotFoundException('Site not found'));
+      expect(repo.findOne).not.toHaveBeenCalled();
+      expect(repo.update).not.toHaveBeenCalled();
+    });
+
+    it('lets a super-admin set CC on any site', async () => {
+      repo.find.mockResolvedValue([{ id: 'acme' }, { id: 'deliva' }]);
+
+      await service.setCc(
+        { ...companyUser, role: 'super_admin', siteIds: [] },
+        'deliva',
+        ['a@deliva.test'],
+      );
+
+      expect(repo.update).toHaveBeenCalled();
+    });
+
+    it.each([
+      [
+        'more than 10 addresses',
+        Array.from({ length: 11 }, (_, n) => `cc${n}@acme.test`),
+        'At most 10 CC addresses',
+      ],
+      [
+        'an invalid address',
+        ['ok@acme.test', 'nope'],
+        'Not valid email addresses: nope',
+      ],
+      [
+        'the main recipient',
+        ['INBOX@acme.test'],
+        'The main recipient already gets every email',
+      ],
+    ])('rejects %s', async (_case, cc, message) => {
+      await expect(service.setCc(companyUser, 'acme', cc)).rejects.toThrow(
+        message,
+      );
+      expect(repo.update).not.toHaveBeenCalled();
+    });
+
+    it("lists the user's companies without SMTP details", async () => {
+      repo.find.mockResolvedValue([
+        site({ ...OWN_SMTP, ccRecipients: ['x@acme.test'] }),
+      ]);
+
+      const list = await service.listForUser(companyUser);
+
+      expect(repo.find).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: In(['acme']) } }),
+      );
+      expect(list).toEqual([
+        {
+          id: 'acme',
+          name: 'Acme Ltd',
+          recipient: 'inbox@acme.test',
+          cc: ['x@acme.test'],
+          isActive: true,
+        },
+      ]);
+      expect(JSON.stringify(list)).not.toMatch(/smtp|mailer|v1:/i);
+    });
+
+    it('returns no companies for a user without sites, without querying', async () => {
+      await expect(
+        service.listForUser({ ...companyUser, siteIds: [] }),
+      ).resolves.toEqual([]);
+      expect(repo.find).not.toHaveBeenCalled();
+    });
+
+    it('passes the CC list to the mail settings', async () => {
+      queryResult.one = site({ ccRecipients: ['x@acme.test'] });
+
+      await expect(service.getMailSettings('acme')).resolves.toMatchObject({
+        cc: ['x@acme.test'],
+      });
     });
   });
 });

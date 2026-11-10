@@ -1,5 +1,5 @@
 import * as nodemailer from 'nodemailer';
-import { MailService } from './mail.service.js';
+import { MailService, type MailSender } from './mail.service.js';
 
 vi.mock('nodemailer', () => ({
   createTransport: vi.fn(() => ({
@@ -30,15 +30,16 @@ describe('MailService', () => {
     process.env = { ...originalEnvironment };
   });
 
-  const send = (sender?: Parameters<MailService['send']>[5]) =>
-    service.send(
-      'inbox@acme.test',
-      'Subject',
-      '<p>html</p>',
-      'text',
-      'jane@example.com',
+  const send = (sender?: MailSender, cc?: string[]) =>
+    service.send({
+      to: 'inbox@acme.test',
+      cc,
+      subject: 'Subject',
+      html: '<p>html</p>',
+      text: 'text',
+      replyTo: 'jane@example.com',
       sender,
-    );
+    });
 
   it('uses the global transport and SMTP_FROM without a sender', async () => {
     await send();
@@ -115,5 +116,24 @@ describe('MailService', () => {
     expect(transport(0).sendMail).toHaveBeenCalledWith(
       expect.objectContaining({ from: 'Acme <no-reply@acme.test>' }),
     );
+  });
+
+  it('CCs the given addresses', async () => {
+    await send(undefined, ['sales@acme.test', 'boss@acme.test']);
+
+    expect(transport(0).sendMail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: 'inbox@acme.test',
+        cc: ['sales@acme.test', 'boss@acme.test'],
+      }),
+    );
+  });
+
+  it('sends no cc header for an empty list', async () => {
+    await send(undefined, []);
+
+    expect(transport(0).sendMail.mock.calls[0][0]).toMatchObject({
+      cc: undefined,
+    });
   });
 });

@@ -204,17 +204,18 @@ export class MailProcessor {
       if (!settings) {
         throw new Error(`Site ${siteId} does not exist or is inactive`);
       }
-      const result = await this.mailService.send(
-        settings.recipient,
+      const result = await this.mailService.send({
+        to: settings.recipient,
+        cc: settings.cc,
         subject,
         html,
         text,
-        from,
-        { smtp: settings.smtp, from: settings.from },
-      );
+        replyTo: from,
+        sender: { smtp: settings.smtp, from: settings.from },
+      });
       await this.contactService.markSent(contactId, {
         to: settings.recipient,
-        cc: [],
+        cc: settings.cc,
         attempts: attempt,
       });
       this.logger.log(
