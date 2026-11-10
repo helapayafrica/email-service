@@ -429,6 +429,95 @@ describe('SitesService', () => {
     });
   });
 
+  describe('company settings (name and sender)', () => {
+    const companyUser: AuthUser = {
+      id: 'u1',
+      email: 'u@acme.test',
+      fullName: 'U',
+      role: 'company_user',
+      siteIds: ['acme'],
+    };
+
+    it('updates the name and sender and reports which fields changed', async () => {
+      queryResult.one = site();
+
+      const result = await service.updateCompanySettings(companyUser, 'acme', {
+        name: '  Acme Group ',
+        from: 'Acme <hello@acme.test>',
+      });
+
+      expect(repo.update).toHaveBeenCalledWith(
+        { id: 'acme' },
+        { name: 'Acme Group', smtpFrom: 'Acme <hello@acme.test>' },
+      );
+      expect(result.changed).toEqual(['name', 'smtpFrom']);
+      expect(result.site).toMatchObject({
+        name: 'Acme Group',
+        from: 'Acme <hello@acme.test>',
+        hasOwnSmtp: false,
+      });
+    });
+
+    it('clears the sender back to the default with null or ""', async () => {
+      queryResult.one = site({ smtpFrom: 'Acme <hello@acme.test>' });
+
+      await service.updateCompanySettings(companyUser, 'acme', { from: '' });
+
+      expect(repo.update).toHaveBeenCalledWith({ id: 'acme' }, { smtpFrom: null });
+    });
+
+    it('does not write when nothing changed', async () => {
+      queryResult.one = site();
+
+      const result = await service.updateCompanySettings(companyUser, 'acme', {
+        name: 'Acme Ltd',
+      });
+
+      expect(repo.update).not.toHaveBeenCalled();
+      expect(result.changed).toEqual([]);
+    });
+
+    it('rejects an invalid sender address', async () => {
+      queryResult.one = site();
+
+      await expect(
+        service.updateCompanySettings(companyUser, 'acme', { from: 'not an address' }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(repo.update).not.toHaveBeenCalled();
+    });
+
+    it('keeps the sender required when the site has its own SMTP server', async () => {
+      queryResult.one = site(OWN_SMTP);
+
+      await expect(
+        service.updateCompanySettings(companyUser, 'acme', { from: null }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(repo.update).not.toHaveBeenCalled();
+    });
+
+    it('never touches SMTP credentials when changing the sender', async () => {
+      queryResult.one = site(OWN_SMTP);
+
+      const result = await service.updateCompanySettings(companyUser, 'acme', {
+        from: 'Acme Sales <sales@acme.test>',
+      });
+
+      expect(repo.update).toHaveBeenCalledWith(
+        { id: 'acme' },
+        { smtpFrom: 'Acme Sales <sales@acme.test>' },
+      );
+      expect(result.site).not.toHaveProperty('smtp');
+      expect(result.site.hasOwnSmtp).toBe(true);
+    });
+
+    it("returns 404 for a site the user can't see, without loading it", async () => {
+      await expect(
+        service.updateCompanySettings(companyUser, 'deliva', { name: 'X' }),
+      ).rejects.toThrow(new NotFoundException('Site not found'));
+      expect(repo.update).not.toHaveBeenCalled();
+    });
+  });
+
   describe('CC list', () => {
     const companyUser: AuthUser = {
       id: 'u1',

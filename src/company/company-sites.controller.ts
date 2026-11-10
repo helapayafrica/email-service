@@ -4,6 +4,7 @@ import {
   Get,
   Logger,
   Param,
+  Patch,
   Put,
   UseGuards,
 } from '@nestjs/common';
@@ -19,9 +20,11 @@ import { CurrentUser } from '../auth/current-user.decorator.js';
 import * as authUser from '../auth/auth-user.js';
 import { SitesService } from '../sites/sites.service.js';
 import { UpdateCcDto } from './dto/update-cc.dto.js';
+import { UpdateCompanySettingsDto } from './dto/update-company-settings.dto.js';
 
-// Company settings any logged-in user may manage for the sites they can see.
-// (SMTP and API keys stay under /admin/sites, for super-admins.)
+// Company settings any logged-in user may manage for the sites they can see:
+// the CC list, the display name and the sender. (Recipient, SMTP, API keys
+// and status stay under /admin/sites, for super-admins.)
 @ApiTags('Company sites')
 @ApiBearerAuth('bearer')
 @ApiUnauthorizedResponse({ description: 'Missing, invalid, or expired token' })
@@ -58,6 +61,30 @@ export class CompanySitesController {
     this.logger.warn(
       `Site CC updated siteId=${id} added=${added.join(',') || '-'} removed=${removed.join(',') || '-'} by userId=${user.id}`,
     );
+    return site;
+  }
+
+  @Patch(':id')
+  @ApiOperation({
+    summary: "Update a company's name or sender",
+    description:
+      'Only the fields sent are changed. `from` is the sender shown on contact emails; null or "" goes back to the default. The recipient, mail server and API key are managed by administrators.',
+  })
+  @ApiNotFoundResponse({ description: 'Not one of your companies' })
+  async updateSettings(
+    @CurrentUser() user: authUser.AuthUser,
+    @Param('id') id: string,
+    @Body() dto: UpdateCompanySettingsDto,
+  ) {
+    const { site, changed } = await this.sites.updateCompanySettings(user, id, {
+      name: dto.name,
+      from: dto.from,
+    });
+    if (changed.length) {
+      this.logger.log(
+        `Site settings updated siteId=${id} fields=${changed.join(',')} by userId=${user.id}`,
+      );
+    }
     return site;
   }
 }

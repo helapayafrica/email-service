@@ -95,6 +95,19 @@ export interface CompanySiteView {
   recipient: string;
   cc: string[];
   isActive: boolean;
+  // Sender override; null uses the default (SMTP_FROM).
+  from: string | null;
+  // Whether the site sends through its own SMTP server. Its details stay
+  // super-admin only; company users just need to know the sender can't be
+  // cleared then.
+  hasOwnSmtp: boolean;
+}
+
+// What a company user may change about their own company.
+export interface CompanySettingsInput {
+  name?: string;
+  // null or '' clears the override (not allowed when the site has its own SMTP).
+  from?: string | null;
 }
 
 export const MAX_CC_RECIPIENTS = 10;
@@ -106,6 +119,8 @@ function toCompanyView(site: Site): CompanySiteView {
     recipient: site.recipient,
     cc: site.ccRecipients,
     isActive: site.isActive,
+    from: site.smtpFrom,
+    hasOwnSmtp: site.smtpHost !== null,
   };
 }
 
@@ -340,6 +355,36 @@ export class SitesService {
       added: next.filter((address) => !previous.includes(address)),
       removed: previous.filter((address) => !next.includes(address)),
     };
+  }
+
+  // Name and sender only: recipient, SMTP, API key and status stay with
+  // super-admins. Same 404 rule as setCc. Returns which fields changed so the
+  // controller can log them.
+  async updateCompanySettings(
+    user: AuthUser,
+    id: string,
+    input: CompanySettingsInput,
+  ): Promise<{ site: CompanySiteView; changed: string[] }> {
+    if (!(await this.accessibleSiteIds(user)).includes(id)) {
+      throw new NotFoundException('Site not found');
+    }
+    const current = await this.loadForUpdate(id);
+
+    const changes: Partial<Site> = {};
+    if (input.name !== undefined) {
+      const name = validName(input.name);
+      if (name !== current.name) changes.name = name;
+    }
+    if (input.from !== undefined) {
+      // Reuses the admin rules: address format, and no empty sender when the
+      // site has its own SMTP server.
+      const { smtpFrom } = this.mergeSmtp(current, { smtpFrom: input.from });
+      if (smtpFrom !== current.smtpFrom) changes.smtpFrom = smtpFrom;
+    }
+
+    const changed = Object.keys(changes);
+    if (changed.length) await this.repo.update({ id }, changes);
+    return { site: toCompanyView({ ...current, ...changes }), changed };
   }
 
   // ---- Super-admin management -------------------------------------------

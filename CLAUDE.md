@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-NVO Email Service: a NestJS 12 backend that receives contact-form submissions from several company websites (`POST /contact`), stores them in PostgreSQL, queues delivery via Bull/Redis, and sends HTML + plain-text email over SMTP. A JWT-authenticated dashboard API lets company users read their companies' requests with a delivery record (`/requests`) and manage each company's CC list (`/sites`), and super-admins manage companies (`/admin/sites`) and users (`/admin/users`). Node 24+, ESM (`"type": "module"`).
+NVO Email Service: a NestJS 12 backend that receives contact-form submissions from several company websites (`POST /contact`), stores them in PostgreSQL, queues delivery via Bull/Redis, and sends HTML + plain-text email over SMTP. A JWT-authenticated dashboard API lets company users read their companies' requests with a delivery record (`/requests`) and manage each company's CC list, display name and sender (`/sites`; recipient, SMTP, keys and status stay admin-only), and super-admins manage companies (`/admin/sites`) and users (`/admin/users`). Node 24+, ESM (`"type": "module"`).
 
 ## Commands
 
@@ -41,7 +41,7 @@ Local URLs: API `http://localhost:3000`, Scalar API docs `/docs`, Mailpit inbox 
 
 Request flow: `ContactController` → `ApiKeyGuard` → `ContactService` → Postgres row (`contact_requests`, status `queued`) → Bull job `send-contact-email` on queue `mail` → `MailProcessor` renders template and loads the site's mail settings → `MailService` (nodemailer) → status updated to `sent`/`failed`.
 
-Dashboard flow: `POST /auth/login` (argon2id, 5/min throttle) returns a JWT with only `{ sub, email }`. `JwtAuthGuard` reloads the user from the database on every request (so `isActive`, `role` and `siteIds` changes apply immediately) and sets `request.user` (`AuthUser`, read with `@CurrentUser()`). `SuperAdminGuard` goes after it on `/admin/*`. Tenant scoping always goes through `SitesService.accessibleSiteIds(user)`: super-admins get every site (including inactive), company users get `users.siteIds`; a client-supplied `siteId` may only narrow that list, and anything outside it is a `404`, never `403`. `PUT /sites/:id/cc` (`src/company/`) follows the same rule. User admin (`/admin/users`) blocks a super-admin from deactivating or re-roling themselves; user changes apply on the next request because the guard reloads the user, but a password reset does not end open sessions (no token revocation yet).
+Dashboard flow: `POST /auth/login` (argon2id, 5/min throttle) returns a JWT with only `{ sub, email }`. `JwtAuthGuard` reloads the user from the database on every request (so `isActive`, `role` and `siteIds` changes apply immediately) and sets `request.user` (`AuthUser`, read with `@CurrentUser()`). `SuperAdminGuard` goes after it on `/admin/*`. Tenant scoping always goes through `SitesService.accessibleSiteIds(user)`: super-admins get every site (including inactive), company users get `users.siteIds`; a client-supplied `siteId` may only narrow that list, and anything outside it is a `404`, never `403`. `PUT /sites/:id/cc` and `PATCH /sites/:id` (name and sender only, `src/company/`) follow the same rule. User admin (`/admin/users`) blocks a super-admin from deactivating or re-roling themselves; user changes apply on the next request because the guard reloads the user, but a password reset does not end open sessions (no token revocation yet).
 
 Key points that span multiple files:
 

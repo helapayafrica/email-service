@@ -5,6 +5,7 @@ import type { AuthUser } from '../auth/auth-user.js';
 import type { SitesService } from '../sites/sites.service.js';
 import { CompanySitesController } from './company-sites.controller.js';
 import { UpdateCcDto } from './dto/update-cc.dto.js';
+import { UpdateCompanySettingsDto } from './dto/update-company-settings.dto.js';
 
 const user: AuthUser = {
   id: 'u1',
@@ -41,6 +42,56 @@ describe('CompanySitesController', () => {
     expect(warn).toHaveBeenCalledWith(
       'Site CC updated siteId=deliva added=new@x.test removed=- by userId=u1',
     );
+  });
+});
+
+describe('CompanySitesController settings', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('logs which fields changed and by whom, and skips the log when nothing changed', async () => {
+    const log = vi.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+    const sites = {
+      updateCompanySettings: vi
+        .fn()
+        .mockResolvedValueOnce({ site: { id: 'deliva' }, changed: ['name', 'smtpFrom'] })
+        .mockResolvedValueOnce({ site: { id: 'deliva' }, changed: [] }),
+    };
+    const controller = new CompanySitesController(sites as unknown as SitesService);
+
+    await expect(
+      controller.updateSettings(user, 'deliva', { name: 'Deliva', from: null }),
+    ).resolves.toEqual({ id: 'deliva' });
+    expect(sites.updateCompanySettings).toHaveBeenCalledWith(user, 'deliva', {
+      name: 'Deliva',
+      from: null,
+    });
+    expect(log).toHaveBeenCalledWith(
+      'Site settings updated siteId=deliva fields=name,smtpFrom by userId=u1',
+    );
+
+    log.mockClear();
+    await controller.updateSettings(user, 'deliva', { name: 'Deliva' });
+    expect(log).not.toHaveBeenCalled();
+  });
+});
+
+describe('UpdateCompanySettingsDto', () => {
+  it('drops fields a company user may not change', async () => {
+    const dto = plainToInstance(UpdateCompanySettingsDto, {
+      name: 'Deliva',
+      recipient: 'evil@x.test',
+      smtpHost: 'smtp.evil.test',
+    });
+    expect(await validate(dto, { whitelist: true })).toEqual([]);
+    expect(dto).not.toHaveProperty('recipient');
+    expect(dto).not.toHaveProperty('smtpHost');
+  });
+
+  it('rejects a name over 150 characters', async () => {
+    const dto = plainToInstance(UpdateCompanySettingsDto, { name: 'x'.repeat(151) });
+    expect(await validate(dto)).toHaveLength(1);
   });
 });
 
