@@ -127,7 +127,8 @@ branch is not pushed yet.
 
 - [ ] ~~User management CLI~~: replaced by the `/admin/users` API in step 8c.
 - [ ] Users changing their own password (`PATCH /auth/me/password`).
-- [ ] Hide the password as it's typed in the `create-user` prompt (it currently echoes).
+- [x] Hide the password as it's typed (`src/cli/password-prompt.ts`, raw mode on a terminal, one line per question when piped; asked twice). Used by `create-user` and `reset-password`.
+- [x] `npm run user:reset-password -- --email <email> [--activate]` (`src/cli/reset-password.ts`) for when nobody can log in to use `/admin/users/:id/password`. Added 2026-11-10.
 - [ ] Logout or token revocation. For now, tokens expire after `JWT_EXPIRES_IN_SECONDS`, and setting `isActive = false` locks a user out immediately.
 - [ ] Frontend dashboard: login page, a company switcher based on `sites` from `/auth/me`, and a paginated requests table with a detail view.
 

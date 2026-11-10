@@ -199,12 +199,19 @@ curl --fail http://127.0.0.1:3000/
 ### Create the first super-admin and your sites
 
 There is no public sign-up. Create the first account inside the app container.
-The command prompts for a password (at least 12 characters). The password is
-visible while you type it, so clear the screen afterwards.
+The command asks for a password twice (at least 12 characters); it is hidden
+as you type.
 
 ```bash
 sudo docker compose --env-file .env.production -f docker-compose.yml -f docker-compose.prod.yml exec app npm run user:create:prod -- --email you@yourcompany.com --name "Your Name" --role super_admin
-clear
+```
+
+Locked out (for example the only super-admin forgot their password)? Reset it
+from the server; the password prompt is hidden and asked twice, and
+`--activate` also re-enables a deactivated account:
+
+```bash
+sudo docker compose --env-file .env.production -f docker-compose.yml -f docker-compose.prod.yml exec app npm run user:reset-password:prod -- --email you@yourcompany.com
 ```
 
 Log in and create a site for each company website. The `id` is permanent and

@@ -28,6 +28,7 @@ npm run migration:create -- src/database/migrations/AddField
 
 npm run user:create -- --email a@b.com --name "A" --role super_admin   # or --site <id> (repeatable); prompts for the password. Only needed for the first super-admin; after that use POST /admin/users
 docker compose -f docker-compose.yml -f docker-compose.dev.yml exec app npm run user:create:prod -- ...   # same, inside the local stack
+npm run user:reset-password -- --email a@b.com [--activate]   # when locked out; :prod variant inside a container. Both CLIs ask for the password twice, hidden (src/cli/password-prompt.ts); piped input gives one line per question
 ```
 
 `.env` needs `JWT_SECRET` (≥ 32 chars) and `SITE_SECRETS_KEY` (32 bytes, base64); the app and Compose refuse to start without them. A fresh database has no sites: create a super-admin, log in, `POST /admin/sites` (walkthrough in `README.md`).

@@ -201,14 +201,16 @@ within a few seconds. `dcp logs --tail=50 app` should show
 
 Also submit one form from each real website to confirm it end to end.
 
-**Create the first super-admin.** The command prompts for the password, at
-least 12 characters. The password is visible while you type it, so make sure
-nobody can see your screen and clear it afterwards.
+**Create the first super-admin.** The command asks for the password twice
+(at least 12 characters); it is hidden as you type.
 
 ```bash
 dcp exec app npm run user:create:prod -- --email you@yourcompany.com --name "Your Name" --role super_admin
-clear
 ```
+
+If you're ever locked out, reset it the same way:
+`dcp exec app npm run user:reset-password:prod -- --email you@yourcompany.com`
+(add `--activate` to re-enable a deactivated account).
 
 **Log in and call the dashboard API**
 

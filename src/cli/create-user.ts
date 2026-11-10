@@ -1,15 +1,15 @@
 import { parseArgs } from 'node:util';
-import { createInterface } from 'node:readline/promises';
 import dataSource from '../database/data-source.js';
 import {
   User,
   USER_ROLES,
   type UserRole,
 } from '../users/entities/user.entity.js';
-import { UserService } from '../users/user.service.js';
+import { MIN_PASSWORD_LENGTH, UserService } from '../users/user.service.js';
 import { Site } from '../sites/entities/site.entity.js';
 import { SecretBox } from '../sites/site-secrets.js';
 import { SitesService } from '../sites/sites.service.js';
+import { promptNewPassword } from './password-prompt.js';
 
 const usage = `Usage:
   npm run user:create -- --email <email> --name "<full name>" --site <siteId> [--site <siteId> ...]
@@ -30,10 +30,15 @@ if (!values.email || !values.name || !USER_ROLES.includes(role)) {
   process.exit(1);
 }
 
-// Prompt instead of a --password flag so the password stays out of shell history.
-const rl = createInterface({ input: process.stdin, output: process.stdout });
-const password = await rl.question('Password (min 12 characters): ');
-rl.close();
+// Prompt (hidden, asked twice) instead of a --password flag, so the password
+// stays out of shell history and off the screen.
+let password: string;
+try {
+  password = await promptNewPassword(MIN_PASSWORD_LENGTH);
+} catch (error) {
+  console.error(error instanceof Error ? error.message : error);
+  process.exit(1);
+}
 
 await dataSource.initialize();
 try {

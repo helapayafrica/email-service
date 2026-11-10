@@ -81,11 +81,18 @@ dc() { docker compose -f docker-compose.yml -f docker-compose.dev.yml "$@"; }
 ```
 
 **1. Create a super-admin.** There is no public sign-up; accounts are created
-from the command line. The command prompts for a password (at least 12
-characters; it is shown as you type).
+from the command line. The command asks for a password twice (at least 12
+characters; hidden as you type).
 
 ```bash
 dc exec app npm run user:create:prod -- --email admin@example.com --name "Admin" --role super_admin
+```
+
+Forgot it later? Reset it the same way (add `--activate` to re-enable a
+deactivated account):
+
+```bash
+dc exec app npm run user:reset-password:prod -- --email admin@example.com
 ```
 
 **2. Log in.**
@@ -182,6 +189,7 @@ npm run prod:logs       # Follow production API logs
 npm run migration:run   # Build and apply pending migrations
 npm run migration:show  # Show migration status
 npm run user:create     # Create a dashboard user (on the host; user:create:prod in a container)
+npm run user:reset-password  # Reset a user's password, e.g. when locked out (:prod in a container)
 npm run build           # Compile the production application
 npm run lint            # Run static analysis
 npm test                # Run isolated unit tests

@@ -121,8 +121,8 @@ There is no public sign-up. Super-admins manage users through `/admin/users`
   so nobody can lock themselves out.
 
 The first super-admin has to be created from the command line, since nobody
-can log in yet. The password prompt requires at least 12 characters and is
-shown as you type.
+can log in yet. The command asks for the password twice (at least 12
+characters); it is hidden as you type.
 
 ```bash
 # In a running container (local: add -f docker-compose.dev.yml; production: see the VPS guides)
@@ -131,6 +131,16 @@ docker compose exec app npm run user:create:prod -- --email admin@example.com --
 
 # Or on the host, with the database reachable at DB_HOST
 npm run user:create -- --email ops@deliva.com --name "Ops" --site deliva
+```
+
+When nobody can log in to use the API, for example because the only
+super-admin forgot their password, reset it from the command line. It asks for
+the new password twice, hidden; `--activate` also re-enables a deactivated
+account. Open sessions stay valid until their token expires.
+
+```bash
+docker compose exec app npm run user:reset-password:prod -- --email admin@example.com [--activate]
+npm run user:reset-password -- --email admin@example.com   # on the host
 ```
 
 Each `--site` must be an existing site id. A company user needs at least one;
