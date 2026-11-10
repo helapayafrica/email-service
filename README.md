@@ -11,8 +11,10 @@ lets company staff log in and read their company's submissions.
   API key, recipient, and optionally its own SMTP server and From address
 - API keys stored as a hash plus an encrypted copy; SMTP passwords encrypted
 - Dashboard login with JWT: company users see only their companies, super-admins
-  see everything
-- Paginated, searchable list of contact requests per company
+  see everything; super-admins manage users and their companies over the API
+- Paginated, searchable list of contact requests per company, with a delivery
+  record for each: where the email went, who was CC'd, when, and why it failed
+- Per-company CC list that company users manage themselves
 - Required contact details: full name, email, phone number, and message;
   optional company and subject
 - Idempotency protection against duplicate submissions
@@ -127,10 +129,32 @@ The email appears in Mailpit at `http://localhost:8025`. Use a new
 `idempotency-key` for each new submission; reusing one returns the existing
 request and does not queue a duplicate email.
 
-**5. Read it back** as the dashboard would:
+**5. Read it back** as the dashboard would. `delivery` shows where the email
+went (`deliveredTo`, `cc`, `sentAt`) or why it failed (`lastError`):
 
 ```bash
-curl -s http://localhost:3000/requests -H "Authorization: Bearer $TOKEN" | jq
+curl -s http://localhost:3000/requests -H "Authorization: Bearer $TOKEN" | jq '.items[0] | {status, delivery}'
+```
+
+**6. Add a company user** who can see only Deliva:
+
+```bash
+curl -s -X POST http://localhost:3000/admin/users \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"email":"jane@deliva.com","fullName":"Jane","role":"company_user",
+       "siteIds":["deliva"],"password":"jane-initial-password"}' | jq
+```
+
+**7. Set Deliva's CC list** (as Jane, or as the super-admin). Every new contact
+email for Deliva is then CC'd to these addresses:
+
+```bash
+JANE=$(curl -s -X POST http://localhost:3000/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"jane@deliva.com","password":"jane-initial-password"}' | jq -r .accessToken)
+curl -s -X PUT http://localhost:3000/sites/deliva/cc \
+  -H "Authorization: Bearer $JANE" -H 'Content-Type: application/json' \
+  -d '{"cc":["sales@example.com"]}' | jq
 ```
 
 Everything above can also be done in the browser at `/docs`: log in with

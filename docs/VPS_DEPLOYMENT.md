@@ -203,8 +203,16 @@ browser at `/docs`.
 Create logins for company staff, one per person, limited to their companies:
 
 ```bash
-sudo docker compose --env-file .env.production -f docker-compose.yml -f docker-compose.prod.yml exec app npm run user:create:prod -- --email jane@company-one.example --name "Jane" --site deliva
+curl -s -X POST http://127.0.0.1:3000/admin/users -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"jane@company-one.example","fullName":"Jane","role":"company_user",
+       "siteIds":["deliva"],"password":"<initial password, 12+ characters>"}' | jq
 ```
+
+Change a user's companies, deactivate them, or reset a password later with
+`PATCH /admin/users/:id` and `POST /admin/users/:id/password`. Company users
+can set their companies' CC lists themselves (`PUT /sites/:id/cc`). See
+[PROJECT.md](PROJECT.md#users).
 
 ## 6. Configure Nginx
 

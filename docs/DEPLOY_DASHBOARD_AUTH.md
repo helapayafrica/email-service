@@ -11,7 +11,7 @@ release. Follow it once, in order. Allow about 20 minutes.
 |---|---|
 | Database | New migrations: `users` table, user roles and sites, an index on `contact_requests`, the `sites` table, delivery-record columns on `contact_requests`, and a CC list on `sites`. They are additive: existing tables and data are not changed. |
 | Sites | Companies now live in the `sites` table instead of the `SITE_*` env vars. Each site's API key is stored as a hash plus an encrypted copy. A site can have its own SMTP server. |
-| Dashboard API | `POST /auth/login`, `GET /auth/me`, `GET /requests`, `GET /requests/:id`, and for super-admins `/admin/sites` (create, edit, deactivate, rotate and reveal keys), all using a bearer token. |
+| Dashboard API | `POST /auth/login`, `GET /auth/me`, `GET /requests` and `GET /requests/:id` (each with a delivery record), `GET /sites` and `PUT /sites/:id/cc` (company CC lists), and for super-admins `/admin/sites` (create, edit, deactivate, rotate and reveal keys) and `/admin/users` (create, edit, deactivate, reset passwords), all using a bearer token. |
 | Configuration | Three new env vars: `JWT_SECRET`, `JWT_EXPIRES_IN_SECONDS`, `SITE_SECRETS_KEY`. Compose refuses to start without `JWT_SECRET` and `SITE_SECRETS_KEY`. |
 | Websites | Nothing changes for them. Each site keeps its current API key, so contact forms keep working. |
 
@@ -225,11 +225,23 @@ curl -s 'http://127.0.0.1:3000/requests?limit=3' -H "Authorization: Bearer $TOKE
 `/auth/me` should list every site, and `/requests` should show your test
 submissions. Login allows 5 attempts per minute, so `429` means wait a minute.
 
-**Company users** (optional now). One per person, limited to their companies:
+`/requests` also shows each test submission's `delivery`: `deliveredTo`
+should be that site's recipient, and `lastError` empty.
+
+**Company users** (optional now). One per person, limited to their companies.
+Create them through the API, with the super-admin `$TOKEN`:
 
 ```bash
-dcp exec app npm run user:create:prod -- --email jane@deliva.com --name "Jane" --site deliva
+curl -s -X POST http://127.0.0.1:3000/admin/users -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"jane@deliva.com","fullName":"Jane","role":"company_user",
+       "siteIds":["deliva"],"password":"<initial password, 12+ characters>"}' | jq
 ```
+
+Later changes (companies, deactivation, password resets) go through
+`PATCH /admin/users/:id` and `POST /admin/users/:id/password`, or at `/docs`
+under *Admin: users*. Company users can set their own companies' CC lists with
+`PUT /sites/:id/cc`.
 
 **Manage sites** (optional). With the super-admin `$TOKEN` from above, or
 interactively at `https://<your API host>/docs` under *Admin: sites*:
@@ -297,6 +309,7 @@ These are planned in [`DASHBOARD_AUTH_PLAN.md`](DASHBOARD_AUTH_PLAN.md):
 
 - **Dashboard frontend.** When it exists, add its origin to `CORS_ORIGINS`.
   The `Authorization` header is already allowed.
-- **Maintenance:** `dotenv` is used by the CLIs and the migration data source
-  but is only installed indirectly, through `@nestjs/config`. Add it to
-  `dependencies` in `package.json` so a future upgrade can't silently remove it.
+- **Ending open sessions.** A password reset doesn't log out sessions that
+  are already open: their tokens stay valid until they expire. To cut someone
+  off at once, deactivate them, reset the password, then reactivate.
+- **Users changing their own password.** For now a super-admin resets it.

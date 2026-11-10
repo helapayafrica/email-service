@@ -16,9 +16,16 @@ Super-admins, the team running the service, manage the companies themselves.
   slug id (`deliva`), a display name, the recipient for its contact emails, an
   API key, and optionally its own SMTP server. Websites send the id as `siteId`.
 - **Company user:** a dashboard login that can see the requests of the sites
-  listed in its `siteIds`. One person can belong to several companies.
-- **Super-admin:** a dashboard login that sees every site and can create, edit,
-  and deactivate sites and manage their API keys.
+  listed in its `siteIds`, and edit those sites' CC lists. One person can
+  belong to several companies.
+- **Super-admin:** a dashboard login that sees every site, creates, edits, and
+  deactivates sites, manages their API keys and SMTP settings, and manages
+  users.
+- **CC list:** up to 10 addresses per site that are CC'd on every contact email
+  for that site.
+- **Delivery record:** stored on every contact request: where the email went,
+  who was CC'd, when it was sent, how many attempts it took, and the last
+  error.
 
 ## Request flow
 
@@ -29,9 +36,9 @@ Company website
   -> idempotency check
   -> PostgreSQL contact_requests row (status queued) -> 202 Accepted
   -> Redis/Bull mail job
-  -> mail processor loads the site's recipient and SMTP settings
+  -> mail processor loads the site's recipient, CC list, and SMTP settings
   -> the site's own SMTP server, or the global SMTP_* server
-  -> company recipient; status sent or failed
+  -> company recipient (+ CC); status sent or failed, with the delivery record
 ```
 
 PostgreSQL is the durable record. Redis holds asynchronous jobs. SMTP delivers
@@ -43,10 +50,11 @@ database when it sends, so a retry uses the site's current settings.
 
 ```text
 src/
-  admin/        super-admin endpoints for managing sites (/admin/sites)
+  admin/        super-admin endpoints for sites and users (/admin/*)
   auth/         login, JWT guard, super-admin guard, @CurrentUser()
   cli/          create-user and site:import-env command-line tools
   common/       API-key guard and global exception formatting
+  company/      company settings any logged-in user can manage (/sites, CC)
   contact/      POST /contact, DTO, persistence, and queue submission
   database/     TypeORM data source and migrations
   mail/         Bull processor, SMTP client, and email template
@@ -93,8 +101,28 @@ Companies are not configured through environment variables; see
 
 ## Users
 
-There is no public sign-up. Create accounts from the command line. The password
-prompt requires at least 12 characters and is shown as you type.
+There is no public sign-up. Super-admins manage users through `/admin/users`
+(see [API](#api)), with `curl` or in the browser at `/docs`:
+
+- **Create** with `POST /admin/users`: `email`, `fullName`, `role`
+  (`company_user` or `super_admin`), `siteIds`, and an initial `password` of at
+  least 12 characters. Give the password to the person through a safe channel.
+- **Change** name, role, companies, or active status with
+  `PATCH /admin/users/:id`. Only the fields sent change. Changes apply on the
+  user's next request; they don't need to log in again. Promoting to
+  super-admin clears the companies; demoting needs `siteIds`.
+- **Deactivate** with `"isActive": false`: the user is locked out on their next
+  request.
+- **Reset a password** with `POST /admin/users/:id/password`. Sessions that are
+  already open stay valid until their token expires (`JWT_EXPIRES_IN_SECONDS`).
+  To cut someone off at once, deactivate them, reset the password, then
+  reactivate.
+- A super-admin can't deactivate their own account or change their own role,
+  so nobody can lock themselves out.
+
+The first super-admin has to be created from the command line, since nobody
+can log in yet. The password prompt requires at least 12 characters and is
+shown as you type.
 
 ```bash
 # In a running container (local: add -f docker-compose.dev.yml; production: see the VPS guides)
@@ -106,9 +134,7 @@ npm run user:create -- --email ops@deliva.com --name "Ops" --site deliva
 ```
 
 Each `--site` must be an existing site id. A company user needs at least one;
-a super-admin takes none. To disable a user, set `"isActive" = false` in the
-`users` table: they are locked out on their next request, without waiting for
-their token to expire.
+a super-admin takes none.
 
 ## Managing sites
 
@@ -131,6 +157,11 @@ or in the browser at `/docs`.
 - **Deactivate** with `PATCH` and `"isActive": false`. Its key stops working,
   queued emails for it fail, and its requests stay visible in the dashboard.
   Sites are never deleted.
+- **CC list:** any user who can see a site can replace its CC list with
+  `PUT /sites/:id/cc` and `{ "cc": ["sales@deliva.com"] }` (`[]` clears it). Up
+  to 10 addresses; the main recipient can't be on it. Every change is logged
+  with the addresses added and removed and who made it, because whoever edits
+  CC can copy the company's future submissions elsewhere.
 - **Keys:** `GET /admin/sites/:id/api-key` reveals the current key.
   `POST /admin/sites/:id/rotate-key` issues a new one; **the old key stops
   working immediately**, so update the website straight away.
@@ -165,12 +196,19 @@ take `Authorization: Bearer <accessToken>`. In Scalar, log in with
 | `GET /auth/me`                     | logged in       | The current user and the sites they can see               |
 | `GET /requests`                    | logged in       | Contact requests for the user's sites, newest first       |
 | `GET /requests/:id`                | logged in       | One contact request                                       |
+| `GET /sites`                       | logged in       | The user's companies, with recipient and CC list          |
+| `PUT /sites/:id/cc`                | logged in       | Replace a company's CC list                               |
 | `GET /admin/sites`                 | super-admin     | All sites, including inactive ones                        |
 | `GET /admin/sites/:id`             | super-admin     | One site                                                  |
 | `POST /admin/sites`                | super-admin     | Create a site; returns `{ site, apiKey }`                  |
 | `PATCH /admin/sites/:id`           | super-admin     | Update or deactivate a site                               |
 | `POST /admin/sites/:id/rotate-key` | super-admin     | Issue a new API key; the old one stops working            |
 | `GET /admin/sites/:id/api-key`     | super-admin     | Reveal the current API key                                |
+| `GET /admin/users`                 | super-admin     | All users, with their companies                           |
+| `GET /admin/users/:id`             | super-admin     | One user                                                  |
+| `POST /admin/users`                | super-admin     | Create a user                                             |
+| `PATCH /admin/users/:id`           | super-admin     | Change name, role, companies, or active status            |
+| `POST /admin/users/:id/password`   | super-admin     | Reset a user's password                                   |
 
 ### Health check
 
@@ -281,7 +319,17 @@ All parameters are optional:
       "subject": "Website enquiry",
       "message": "...",
       "status": "sent",
-      "createdAt": "2026-11-09T10:30:00.000Z"
+      "createdAt": "2026-11-09T10:30:00.000Z",
+      "delivery": {
+        "deliveredTo": "contact@deliva.com",
+        "cc": ["sales@deliva.com"],
+        "sentAt": "2026-11-09T10:30:01.000Z",
+        "attempts": 1,
+        "maxAttempts": 5,
+        "willRetry": false,
+        "lastAttemptAt": "2026-11-09T10:30:01.000Z",
+        "lastError": null
+      }
     }
   ],
   "total": 1,
@@ -292,6 +340,18 @@ All parameters are optional:
 
 `GET /requests/:id` returns one item, or `404` if it doesn't exist or belongs
 to a site the user can't see.
+
+`delivery` shows whether the email reached the company:
+
+- `status: "sent"`: `deliveredTo` and `cc` are the addresses it actually went
+  to, at `sentAt`. They stay as they were even if the site's recipient or CC
+  list changes later.
+- `status: "failed"` with `willRetry: true`: a delivery attempt failed and
+  another will follow (up to `maxAttempts`). `lastError` says why, e.g.
+  `EAUTH (535): Invalid login: ...`.
+- `status: "failed"` with `willRetry: false`: delivery gave up, or the request
+  couldn't be queued (`attempts: 0`).
+- Requests from before delivery tracking have empty `delivery` fields.
 
 ### Errors
 
@@ -399,6 +459,8 @@ after approximately 2, 4, 8, and 16 seconds.
 
 ### Request is queued but no message arrives
 
+- Look at the request's `delivery` in `GET /requests/:id`: `lastError` holds
+  the SMTP error, and `deliveredTo` / `cc` show where a sent email went.
 - Inspect the API/worker logs (`Contact email delivery failed ...` includes the
   SMTP error code).
 - Check whether the site has its own SMTP settings (`GET /admin/sites/:id`). If
@@ -409,7 +471,8 @@ after approximately 2, 4, 8, and 16 seconds.
   after the form was submitted.
 - Confirm the site's `recipient`.
 - Inspect Mailpit at `http://localhost:8025` during local development.
-- Check the `status` column in `contact_requests` for `sent` or `failed`.
+- A CC'd address not receiving it: check the site's CC list with `GET /sites`,
+  and the recipient's spam folder.
 
 ### Scalar is blocked by Content Security Policy
 
